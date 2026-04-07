@@ -1,0 +1,97 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>快乐猴联合选址优化平台</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}" />
+  </head>
+  <body>
+    <div class="bg-orb orb-1"></div>
+    <div class="bg-orb orb-2"></div>
+
+    <main class="page">
+      <section class="hero card reveal">
+        <p class="eyebrow">Site Intelligence Console</p>
+        <h1>快乐猴社区超市 + RDC 联合选址优化</h1>
+        <p>
+          按照你提供的两份方案文档，系统包含三阶段计算：
+          <b>单店 NPV/DPP 初筛</b>、<b>新增门店同类相食优化</b>、<b>P-中值 RDC 联合选址</b>。
+        </p>
+      </section>
+
+      <section class="card reveal delay-1">
+        <h2>1. 上传数据并运行</h2>
+        <form id="modelForm" class="form-grid">
+          <label>
+            门店数据 CSV（必填）
+            <input type="file" name="store_file" accept=".csv" required />
+          </label>
+
+          <label>
+            RDC 数据 CSV（必填）
+            <input type="file" name="rdc_file" accept=".csv" required />
+          </label>
+
+          <label>
+            距离矩阵 CSV（可选）
+            <input type="file" name="distance_file" accept=".csv" />
+          </label>
+
+          <label>
+            最大新增门店数
+            <input type="number" name="max_new_stores" value="8" min="1" max="30" />
+          </label>
+
+          <label>
+            P 情景（逗号分隔）
+            <input type="text" name="p_values" value="1,2,3" />
+          </label>
+
+          <div class="actions">
+            <button type="submit" class="btn btn-primary">运行上传数据</button>
+            <button type="button" id="runSampleBtn" class="btn btn-ghost">一键运行样例数据</button>
+          </div>
+        </form>
+
+        <div class="hint">
+          <p>样例文件下载：</p>
+          <a href="/api/sample/stores.csv">stores.csv</a>
+          <a href="/api/sample/rdcs.csv">rdcs.csv</a>
+          <a href="/api/sample/distances.csv">distances.csv</a>
+        </div>
+
+        <pre id="status" class="status">等待运行...</pre>
+      </section>
+
+      <section class="card reveal delay-2">
+        <h2>2. 结果总览</h2>
+        <div id="summaryCards" class="summary-grid"></div>
+      </section>
+
+      <section class="card reveal delay-3">
+        <h2>3. 阶段一：Block 初筛（NPV / DPP / 坪效）</h2>
+        <div id="stage1TableWrap" class="table-wrap"></div>
+      </section>
+
+      <section class="card reveal delay-4">
+        <h2>4. 阶段二：新增门店组合优化</h2>
+        <div id="stage2TableWrap" class="table-wrap"></div>
+        <div id="distanceAlerts" class="alerts"></div>
+      </section>
+
+      <section class="card reveal delay-5">
+        <h2>5. 阶段三：RDC 多情景（P-中值）</h2>
+        <div id="scenarioChart" class="bars"></div>
+        <div id="scenarioTableWrap" class="table-wrap"></div>
+      </section>
+
+      <section class="card reveal delay-6">
+        <h2>6. 最优情景门店归属</h2>
+        <div id="assignmentTableWrap" class="table-wrap"></div>
+      </section>
+    </main>
+
+    <script src="{{ url_for('static', filename='app.js') }}"></script>
+  </body>
+</html>

@@ -1,0 +1,821 @@
+from __future__ import annotations
+
+import itertools
+import math
+from dataclasses import dataclass, asdict
+from typing import Dict, Iterable, List, Optional, Sequence, Tuple
+
+
+CITY_PARAMS: Dict[str, Dict[str, object]] = {
+    "beijing": {
+        "horizon_years": 5,
+        "discount_rate": 0.12,
+        "gross_margin": 0.21,
+        "variable_cost_rate": 0.045,
+        "tax_rate": 0.025,
+        "residual_rate": 0.15,
+        "growth": [0.9, 1.0, 1.08, 1.12, 1.12],
+        "delivery_freq": 104,
+        "delivery_fixed_cost": 120.0,
+        "delivery_var_cost_km": 3.5,
+        "standard_store_sales_10k": 800.0,
+        "npv_threshold_10k": 25.0,
+        "rent_cap_per_sqm_day": 1.8,
+    },
+    "hangzhou": {
+        "horizon_years": 5,
+        "discount_rate": 0.11,
+        "gross_margin": 0.22,
+        "variable_cost_rate": 0.042,
+        "tax_rate": 0.025,
+        "residual_rate": 0.15,
+        "growth": [0.9, 1.0, 1.08, 1.12, 1.12],
+        "delivery_freq": 104,
+        "delivery_fixed_cost": 110.0,
+        "delivery_var_cost_km": 3.2,
+        "standard_store_sales_10k": 800.0,
+        "npv_threshold_10k": 28.0,
+        "rent_cap_per_sqm_day": 1.5,
+    },
+}
+
+DEFAULT_CITY_PARAMS = {
+    "horizon_years": 5,
+    "discount_rate": 0.115,
+    "gross_margin": 0.215,
+    "variable_cost_rate": 0.043,
+    "tax_rate": 0.025,
+    "residual_rate": 0.15,
+    "growth": [0.9, 1.0, 1.08, 1.12, 1.12],
+    "delivery_freq": 104,
+    "delivery_fixed_cost": 115.0,
+    "delivery_var_cost_km": 3.35,
+    "standard_store_sales_10k": 800.0,
+    "npv_threshold_10k": 30.0,
+    "rent_cap_per_sqm_day": 1.7,
+}
+
+
+def normalize_city(city: str) -> str:
+    city = (city or "").strip().lower()
+    aliases = {
+        "bj": "beijing",
+        "beijing": "beijing",
+        "北京": "beijing",
+        "hz": "hangzhou",
+        "hangzhou": "hangzhou",
+        "杭州": "hangzhou",
+    }
+    return aliases.get(city, city)
+
+
+def city_params(city: str) -> Dict[str, object]:
+    key = normalize_city(city)
+    base = dict(DEFAULT_CITY_PARAMS)
+    base.update(CITY_PARAMS.get(key, {}))
+    return base
+
+
+def parse_bool(value: object, default: bool = False) -> bool:
+    if isinstance(value, bool):
+        return value
+    if value is None:
+        return default
+    text = str(value).strip().lower()
+    if text in {"1", "true", "yes", "y", "t", "ok", "pass", "qualified", "合格", "是"}:
+        return True
+    if text in {"0", "false", "no", "n", "f", "fail", "unqualified", "不合格", "否"}:
+        return False
+    return default
+
+
+def to_float(value: object, default: float = 0.0) -> float:
+    if value is None:
+        return default
+    if isinstance(value, (int, float)):
+        return float(value)
+    text = str(value).strip().replace(",", "")
+    if not text:
+        return default
+    try:
+        return float(text)
+    except ValueError:
+        return default
+
+
+@dataclass
+class Store:
+    store_id: str
+    name: str
+    city: str
+    lat: float
+    lon: float
+    rf_sales_10k: float
+    area_sqm: float
+    initial_investment_10k: float
+    annual_fixed_cost_10k: float
+    is_existing: bool = False
+
+
+@dataclass
+class RDC:
+    rdc_id: str
+    name: str
+    city: str
+    lat: float
+    lon: float
+    area_sqm: float
+    initial_investment_10k: float
+    annual_rent_10k: float
+    annual_property_10k: float
+    annual_operating_10k: float
+    annual_labor_10k: float
+    annual_utility_10k: float
+    residual_rate: float
+    rent_per_sqm_day: float
+    lease_years: float
+    blue_access: bool
+    core_travel_min: float
+    clear_height_m: float
+    loading_dock: bool
+    can_three_temp: bool
+    fire_pass: bool
+    disturbance_risk: bool
+
+
+@dataclass
+class Stage1Result:
+    store: Store
+    yearly_cashflow_10k: List[float]
+    npv_10k: float
+    dpp_years: Optional[float]
+    revenue_per_sqm_10k: float
+    passed: bool
+    reasons: List[str]
+
+
+@dataclass
+class Stage2StoreResult:
+    store: Store
+    base_npv_10k: float
+    base_sales_10k: float
+    attenuation_ratio: float
+    adjusted_sales_10k: float
+    adjusted_npv_10k: float
+    adjusted_dpp_years: Optional[float]
+
+
+@dataclass
+class Assignment:
+    store_id: str
+    store_name: str
+    store_city: str
+    demand_sales_10k: float
+    rdc_id: str
+    rdc_name: str
+    distance_km: float
+    delivery_cost_pv_10k: float
+
+
+def haversine_km(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
+    radius = 6371.0
+    p1 = math.radians(lat1)
+    p2 = math.radians(lat2)
+    dphi = math.radians(lat2 - lat1)
+    dlambda = math.radians(lon2 - lon1)
+    a = math.sin(dphi / 2.0) ** 2 + math.cos(p1) * math.cos(p2) * math.sin(dlambda / 2.0) ** 2
+    return radius * (2.0 * math.atan2(math.sqrt(a), math.sqrt(1.0 - a)))
+
+
+def parse_stores(records: Iterable[Dict[str, object]]) -> List[Store]:
+    out: List[Store] = []
+    for row in records:
+        store_id = str(row.get("store_id") or row.get("id") or "").strip()
+        if not store_id:
+            continue
+        out.append(
+            Store(
+                store_id=store_id,
+                name=str(row.get("name") or store_id),
+                city=str(row.get("city") or "beijing"),
+                lat=to_float(row.get("lat")),
+                lon=to_float(row.get("lon")),
+                rf_sales_10k=to_float(row.get("rf_sales_10k"), to_float(row.get("annual_sales_10k"), 0.0)),
+                area_sqm=to_float(row.get("area_sqm"), 100.0),
+                initial_investment_10k=to_float(row.get("initial_investment_10k"), 0.0),
+                annual_fixed_cost_10k=to_float(row.get("annual_fixed_cost_10k"), 0.0),
+                is_existing=parse_bool(row.get("is_existing"), False),
+            )
+        )
+    return out
+
+
+def parse_rdcs(records: Iterable[Dict[str, object]]) -> List[RDC]:
+    out: List[RDC] = []
+    for row in records:
+        rdc_id = str(row.get("rdc_id") or row.get("id") or "").strip()
+        if not rdc_id:
+            continue
+        out.append(
+            RDC(
+                rdc_id=rdc_id,
+                name=str(row.get("name") or rdc_id),
+                city=str(row.get("city") or "beijing"),
+                lat=to_float(row.get("lat")),
+                lon=to_float(row.get("lon")),
+                area_sqm=to_float(row.get("area_sqm"), 10000.0),
+                initial_investment_10k=to_float(row.get("initial_investment_10k"), 0.0),
+                annual_rent_10k=to_float(row.get("annual_rent_10k"), 0.0),
+                annual_property_10k=to_float(row.get("annual_property_10k"), 0.0),
+                annual_operating_10k=to_float(row.get("annual_operating_10k"), 0.0),
+                annual_labor_10k=to_float(row.get("annual_labor_10k"), 0.0),
+                annual_utility_10k=to_float(row.get("annual_utility_10k"), 0.0),
+                residual_rate=to_float(row.get("residual_rate"), 0.25),
+                rent_per_sqm_day=to_float(row.get("rent_per_sqm_day"), 0.0),
+                lease_years=to_float(row.get("lease_years"), 0.0),
+                blue_access=parse_bool(row.get("blue_access"), False),
+                core_travel_min=to_float(row.get("core_travel_min"), 999.0),
+                clear_height_m=to_float(row.get("clear_height_m"), 0.0),
+                loading_dock=parse_bool(row.get("loading_dock"), False),
+                can_three_temp=parse_bool(row.get("can_three_temp"), False),
+                fire_pass=parse_bool(row.get("fire_pass"), False),
+                disturbance_risk=parse_bool(row.get("disturbance_risk"), False),
+            )
+        )
+    return out
+
+
+def parse_distance_matrix(records: Iterable[Dict[str, object]]) -> Dict[Tuple[str, str], float]:
+    matrix: Dict[Tuple[str, str], float] = {}
+    for row in records:
+        rdc_id = str(row.get("rdc_id") or "").strip()
+        store_id = str(row.get("store_id") or "").strip()
+        if not rdc_id or not store_id:
+            continue
+        matrix[(rdc_id, store_id)] = to_float(row.get("distance_km"), math.inf)
+    return matrix
+
+
+def compute_dpp(discounted_cashflows: Sequence[float], initial_investment_10k: float) -> Optional[float]:
+    cumulative = -initial_investment_10k
+    for year, cashflow in enumerate(discounted_cashflows, start=1):
+        prev = cumulative
+        cumulative += cashflow
+        if cumulative >= 0:
+            if cashflow <= 0:
+                return float(year)
+            ratio = (0.0 - prev) / cashflow
+            return float(year - 1 + max(0.0, min(1.0, ratio)))
+    return None
+
+
+def evaluate_stage1(stores: Sequence[Store]) -> List[Stage1Result]:
+    results: List[Stage1Result] = []
+    for store in stores:
+        if store.is_existing:
+            continue
+
+        cp = city_params(store.city)
+        years = int(cp["horizon_years"])
+        growth: List[float] = list(cp["growth"])[:years]
+        discount_rate = float(cp["discount_rate"])
+        gross_margin = float(cp["gross_margin"])
+        variable_rate = float(cp["variable_cost_rate"])
+        tax_rate = float(cp["tax_rate"])
+        residual_rate = float(cp["residual_rate"])
+        npv_threshold = float(cp["npv_threshold_10k"])
+
+        yearly_cashflows: List[float] = []
+        discounted: List[float] = []
+        for idx, g in enumerate(growth, start=1):
+            revenue_10k = store.rf_sales_10k * g
+            gross_profit_10k = revenue_10k * gross_margin
+            variable_cost_10k = revenue_10k * variable_rate
+            operating_profit_10k = gross_profit_10k - variable_cost_10k - store.annual_fixed_cost_10k
+            tax_10k = max(0.0, operating_profit_10k) * tax_rate
+            cashflow_10k = operating_profit_10k - tax_10k
+            if idx == years:
+                cashflow_10k += store.initial_investment_10k * residual_rate
+            yearly_cashflows.append(cashflow_10k)
+            discounted.append(cashflow_10k / ((1.0 + discount_rate) ** idx))
+
+        npv_10k = -store.initial_investment_10k + sum(discounted)
+        dpp = compute_dpp(discounted, store.initial_investment_10k)
+        revenue_per_sqm = 0.0
+        if store.area_sqm > 0:
+            revenue_per_sqm = store.rf_sales_10k / store.area_sqm
+
+        reasons: List[str] = []
+        passed = True
+        if npv_10k < npv_threshold:
+            passed = False
+            reasons.append(f"NPV below threshold ({npv_10k:.2f} < {npv_threshold:.2f})")
+        if dpp is None or dpp > 2.5:
+            passed = False
+            reasons.append("DPP exceeds 2.5 years")
+        if revenue_per_sqm < 1.2:
+            passed = False
+            reasons.append(f"Revenue per sqm below 1.2 ({revenue_per_sqm:.2f})")
+
+        results.append(
+            Stage1Result(
+                store=store,
+                yearly_cashflow_10k=yearly_cashflows,
+                npv_10k=npv_10k,
+                dpp_years=dpp,
+                revenue_per_sqm_10k=revenue_per_sqm,
+                passed=passed,
+                reasons=reasons,
+            )
+        )
+
+    return results
+
+
+def pairwise_distance_km(stores: Sequence[Stage1Result]) -> Dict[Tuple[str, str], float]:
+    dist: Dict[Tuple[str, str], float] = {}
+    for i, a in enumerate(stores):
+        for b in stores[i + 1 :]:
+            d = haversine_km(a.store.lat, a.store.lon, b.store.lat, b.store.lon)
+            dist[(a.store.store_id, b.store.store_id)] = d
+            dist[(b.store.store_id, a.store.store_id)] = d
+    return dist
+
+
+def attenuation_for_pair(distance_km: float) -> float:
+    if distance_km < 0.3:
+        return 1.0
+    if distance_km < 0.5:
+        scaled = (0.5 - distance_km) / 0.2
+        return 0.35 * max(0.0, min(1.0, scaled))
+    return 0.0
+
+
+def recompute_adjusted_dpp(base_result: Stage1Result, attenuation_ratio: float) -> Optional[float]:
+    cp = city_params(base_result.store.city)
+    discount_rate = float(cp["discount_rate"])
+    discounted: List[float] = []
+    years = len(base_result.yearly_cashflow_10k)
+    residual = base_result.store.initial_investment_10k * float(cp["residual_rate"])
+
+    for idx, cf in enumerate(base_result.yearly_cashflow_10k, start=1):
+        adjusted_cf = cf * attenuation_ratio
+        if idx == years:
+            adjusted_cf = (cf - residual) * attenuation_ratio + residual
+        discounted.append(adjusted_cf / ((1.0 + discount_rate) ** idx))
+
+    return compute_dpp(discounted, base_result.store.initial_investment_10k)
+
+
+def optimize_stage2(
+    stage1_results: Sequence[Stage1Result],
+    max_new_stores: int = 8,
+) -> Dict[str, object]:
+    candidates = [r for r in stage1_results if r.passed]
+    if not candidates:
+        return {
+            "selected": [],
+            "total_adjusted_npv_10k": 0.0,
+            "total_base_npv_10k": 0.0,
+            "distance_alerts": [],
+        }
+
+    max_new_stores = max(0, min(max_new_stores, len(candidates)))
+    dist = pairwise_distance_km(candidates)
+
+    conflict_pairs = set()
+    penalty_pairs: Dict[Tuple[str, str], float] = {}
+    for a in candidates:
+        for b in candidates:
+            if a.store.store_id >= b.store.store_id:
+                continue
+            d = dist.get((a.store.store_id, b.store.store_id), math.inf)
+            pen = attenuation_for_pair(d)
+            if pen >= 1.0:
+                conflict_pairs.add((a.store.store_id, b.store.store_id))
+            elif pen > 0.0:
+                penalty_pairs[(a.store.store_id, b.store.store_id)] = pen
+
+    candidate_by_id = {c.store.store_id: c for c in candidates}
+    ids = [c.store.store_id for c in candidates]
+
+    best_score = -math.inf
+    best_bundle: Optional[List[Stage2StoreResult]] = None
+
+    def has_conflict(combo_ids: Sequence[str]) -> bool:
+        pool = set(combo_ids)
+        for a, b in conflict_pairs:
+            if a in pool and b in pool:
+                return True
+        return False
+
+    for size in range(0, max_new_stores + 1):
+        for combo in itertools.combinations(ids, size):
+            if has_conflict(combo):
+                continue
+
+            selected_set = set(combo)
+            bundle: List[Stage2StoreResult] = []
+            score = 0.0
+            valid = True
+
+            for sid in combo:
+                base = candidate_by_id[sid]
+                penalty = 0.0
+                for oid in combo:
+                    if oid == sid:
+                        continue
+                    key = tuple(sorted((sid, oid)))
+                    penalty += penalty_pairs.get(key, 0.0)
+                penalty = min(0.45, penalty)
+                attenuation_ratio = max(0.0, 1.0 - penalty)
+
+                adjusted_sales = base.store.rf_sales_10k * attenuation_ratio
+                adjusted_npv = base.npv_10k * attenuation_ratio
+                adjusted_dpp = recompute_adjusted_dpp(base, attenuation_ratio)
+
+                if adjusted_npv <= 0.0:
+                    valid = False
+                    break
+
+                score += adjusted_npv
+                bundle.append(
+                    Stage2StoreResult(
+                        store=base.store,
+                        base_npv_10k=base.npv_10k,
+                        base_sales_10k=base.store.rf_sales_10k,
+                        attenuation_ratio=attenuation_ratio,
+                        adjusted_sales_10k=adjusted_sales,
+                        adjusted_npv_10k=adjusted_npv,
+                        adjusted_dpp_years=adjusted_dpp,
+                    )
+                )
+
+            if valid and score > best_score:
+                best_score = score
+                best_bundle = bundle
+
+    if best_bundle is None:
+        best_bundle = []
+        best_score = 0.0
+
+    distance_alerts = []
+    for a, b in conflict_pairs:
+        d = dist.get((a, b), 0.0)
+        distance_alerts.append(
+            {
+                "store_a": a,
+                "store_b": b,
+                "distance_m": round(d * 1000.0, 1),
+                "rule": "distance below 300m, cannot open together",
+            }
+        )
+
+    total_base = sum(item.base_npv_10k for item in best_bundle)
+    total_investment = sum(item.store.initial_investment_10k for item in best_bundle)
+
+    return {
+        "selected": [
+            {
+                "store_id": item.store.store_id,
+                "name": item.store.name,
+                "city": item.store.city,
+                "base_sales_10k": round(item.base_sales_10k, 4),
+                "attenuation_ratio": round(item.attenuation_ratio, 4),
+                "adjusted_sales_10k": round(item.adjusted_sales_10k, 4),
+                "base_npv_10k": round(item.base_npv_10k, 4),
+                "adjusted_npv_10k": round(item.adjusted_npv_10k, 4),
+                "adjusted_dpp_years": round(item.adjusted_dpp_years, 4) if item.adjusted_dpp_years else None,
+                "lat": item.store.lat,
+                "lon": item.store.lon,
+            }
+            for item in sorted(best_bundle, key=lambda x: x.adjusted_npv_10k, reverse=True)
+        ],
+        "total_adjusted_npv_10k": round(best_score, 4),
+        "total_base_npv_10k": round(total_base, 4),
+        "total_investment_10k": round(total_investment, 4),
+        "distance_alerts": sorted(distance_alerts, key=lambda x: x["distance_m"]),
+    }
+
+
+def rdc_lifecycle_cost_10k(rdc: RDC) -> float:
+    residual = rdc.initial_investment_10k * rdc.residual_rate
+    annual = (
+        rdc.annual_rent_10k
+        + rdc.annual_property_10k
+        + rdc.annual_operating_10k
+        + rdc.annual_labor_10k
+        + rdc.annual_utility_10k
+    )
+    return rdc.initial_investment_10k + 5.0 * annual - residual
+
+
+def rdc_eligibility(rdc: RDC) -> Tuple[bool, List[str]]:
+    cp = city_params(rdc.city)
+    rent_cap = float(cp["rent_cap_per_sqm_day"])
+
+    reasons: List[str] = []
+    if not rdc.blue_access:
+        reasons.append("blue plate truck access requirement not met")
+    if rdc.core_travel_min > 30.0:
+        reasons.append("core travel time above 30 min")
+    if rdc.clear_height_m < 6.0:
+        reasons.append("clear height below 6 m")
+    if not rdc.loading_dock:
+        reasons.append("missing loading dock")
+    if not rdc.can_three_temp:
+        reasons.append("cannot support three-temperature warehouse")
+    if not rdc.fire_pass:
+        reasons.append("fire safety requirement not met")
+    if rdc.disturbance_risk:
+        reasons.append("disturbance risk near residential/school/hospital")
+    if rdc.rent_per_sqm_day > rent_cap:
+        reasons.append(f"rent exceeds city cap ({rdc.rent_per_sqm_day:.2f}>{rent_cap:.2f})")
+    if rdc.lease_years < 5.0:
+        reasons.append("remaining lease below 5 years")
+
+    return (len(reasons) == 0), reasons
+
+
+def distance_lookup_km(
+    rdc: RDC,
+    store: Store,
+    matrix: Dict[Tuple[str, str], float],
+) -> float:
+    key = (rdc.rdc_id, store.store_id)
+    if key in matrix and math.isfinite(matrix[key]):
+        return matrix[key]
+    return haversine_km(rdc.lat, rdc.lon, store.lat, store.lon)
+
+
+def delivery_cost_pv_10k(distance_km: float, sales_10k: float, city: str) -> float:
+    cp = city_params(city)
+    growth = list(cp["growth"])
+    discount_rate = float(cp["discount_rate"])
+    delivery_freq = float(cp["delivery_freq"])
+    fixed_cost = float(cp["delivery_fixed_cost"])
+    variable_cost = float(cp["delivery_var_cost_km"])
+    std_sales = float(cp["standard_store_sales_10k"])
+
+    if std_sales <= 0.0:
+        demand_weight = 1.0
+    else:
+        demand_weight = max(0.05, sales_10k / std_sales)
+
+    trip_cost_yuan = fixed_cost + variable_cost * distance_km
+    pv_yuan = 0.0
+    for year, g in enumerate(growth, start=1):
+        annual_yuan = delivery_freq * demand_weight * trip_cost_yuan * g
+        pv_yuan += annual_yuan / ((1.0 + discount_rate) ** year)
+    return pv_yuan / 10000.0
+
+
+def optimize_stage3(
+    stores: Sequence[Store],
+    selected_new_store_rows: Sequence[Dict[str, object]],
+    rdcs: Sequence[RDC],
+    distance_matrix: Dict[Tuple[str, str], float],
+    p_values: Sequence[int],
+) -> Dict[str, object]:
+    selected_new_ids = {str(r.get("store_id")) for r in selected_new_store_rows}
+    adjusted_sales_by_store: Dict[str, float] = {
+        str(r.get("store_id")): to_float(r.get("adjusted_sales_10k"), to_float(r.get("base_sales_10k"), 0.0))
+        for r in selected_new_store_rows
+    }
+
+    full_network_stores: List[Store] = []
+    for store in stores:
+        if store.is_existing:
+            full_network_stores.append(store)
+            continue
+        if store.store_id in selected_new_ids:
+            adjusted_sales = adjusted_sales_by_store.get(store.store_id, store.rf_sales_10k)
+            full_network_stores.append(
+                Store(
+                    store_id=store.store_id,
+                    name=store.name,
+                    city=store.city,
+                    lat=store.lat,
+                    lon=store.lon,
+                    rf_sales_10k=adjusted_sales,
+                    area_sqm=store.area_sqm,
+                    initial_investment_10k=store.initial_investment_10k,
+                    annual_fixed_cost_10k=store.annual_fixed_cost_10k,
+                    is_existing=store.is_existing,
+                )
+            )
+
+    eligible_rdcs = []
+    rejected_rdcs = []
+    for rdc in rdcs:
+        ok, reasons = rdc_eligibility(rdc)
+        lifecycle = rdc_lifecycle_cost_10k(rdc)
+        row = {
+            "rdc_id": rdc.rdc_id,
+            "name": rdc.name,
+            "city": rdc.city,
+            "lifecycle_cost_10k": round(lifecycle, 4),
+            "rent_per_sqm_day": rdc.rent_per_sqm_day,
+        }
+        if ok:
+            eligible_rdcs.append((rdc, lifecycle))
+        else:
+            row["reasons"] = reasons
+            rejected_rdcs.append(row)
+
+    scenarios = []
+    if not full_network_stores or not eligible_rdcs:
+        return {
+            "eligible_rdcs": [
+                {
+                    "rdc_id": r.rdc_id,
+                    "name": r.name,
+                    "city": r.city,
+                    "lifecycle_cost_10k": round(c, 4),
+                }
+                for r, c in eligible_rdcs
+            ],
+            "rejected_rdcs": rejected_rdcs,
+            "network_stores": [asdict(s) for s in full_network_stores],
+            "scenarios": [],
+            "best_scenario": None,
+        }
+
+    valid_p_values = sorted({p for p in p_values if p > 0})
+    for p in valid_p_values:
+        if p > len(eligible_rdcs):
+            continue
+
+        best_cost = math.inf
+        best_plan = None
+
+        for combo in itertools.combinations(eligible_rdcs, p):
+            open_rdcs = [x[0] for x in combo]
+            rdc_cost = sum(x[1] for x in combo)
+            delivery_total = 0.0
+            assignments: List[Assignment] = []
+
+            for store in full_network_stores:
+                best_rdc = None
+                best_distance = math.inf
+                best_delivery = math.inf
+                for rdc in open_rdcs:
+                    distance_km = distance_lookup_km(rdc, store, distance_matrix)
+                    delivery_cost = delivery_cost_pv_10k(distance_km, store.rf_sales_10k, store.city)
+                    if delivery_cost < best_delivery:
+                        best_rdc = rdc
+                        best_distance = distance_km
+                        best_delivery = delivery_cost
+
+                if best_rdc is None:
+                    continue
+
+                delivery_total += best_delivery
+                assignments.append(
+                    Assignment(
+                        store_id=store.store_id,
+                        store_name=store.name,
+                        store_city=store.city,
+                        demand_sales_10k=store.rf_sales_10k,
+                        rdc_id=best_rdc.rdc_id,
+                        rdc_name=best_rdc.name,
+                        distance_km=best_distance,
+                        delivery_cost_pv_10k=best_delivery,
+                    )
+                )
+
+            total_cost = rdc_cost + delivery_total
+            if total_cost < best_cost:
+                best_cost = total_cost
+                best_plan = {
+                    "p": p,
+                    "rdc_cost_10k": rdc_cost,
+                    "delivery_cost_10k": delivery_total,
+                    "total_cost_10k": total_cost,
+                    "open_rdcs": [
+                        {
+                            "rdc_id": r.rdc_id,
+                            "name": r.name,
+                            "city": r.city,
+                            "lifecycle_cost_10k": round(rdc_lifecycle_cost_10k(r), 4),
+                        }
+                        for r in open_rdcs
+                    ],
+                    "assignments": assignments,
+                }
+
+        if best_plan is None:
+            continue
+
+        assignments = best_plan["assignments"]
+        total_weight = sum(a.demand_sales_10k for a in assignments) or 1.0
+        avg_distance = sum(a.distance_km * a.demand_sales_10k for a in assignments) / total_weight
+
+        total_revenue_pv_10k = 0.0
+        for store in full_network_stores:
+            cp = city_params(store.city)
+            growth = list(cp["growth"])
+            discount_rate = float(cp["discount_rate"])
+            for year, g in enumerate(growth, start=1):
+                total_revenue_pv_10k += store.rf_sales_10k * g / ((1.0 + discount_rate) ** year)
+
+        roi = 0.0
+        if best_plan["total_cost_10k"] > 0:
+            roi = (total_revenue_pv_10k - best_plan["total_cost_10k"]) / best_plan["total_cost_10k"]
+
+        scenarios.append(
+            {
+                "p": best_plan["p"],
+                "rdc_cost_10k": round(best_plan["rdc_cost_10k"], 4),
+                "delivery_cost_10k": round(best_plan["delivery_cost_10k"], 4),
+                "total_cost_10k": round(best_plan["total_cost_10k"], 4),
+                "avg_distance_km": round(avg_distance, 4),
+                "roi": round(roi, 4),
+                "open_rdcs": best_plan["open_rdcs"],
+                "assignments": [
+                    {
+                        "store_id": a.store_id,
+                        "store_name": a.store_name,
+                        "store_city": a.store_city,
+                        "demand_sales_10k": round(a.demand_sales_10k, 4),
+                        "rdc_id": a.rdc_id,
+                        "rdc_name": a.rdc_name,
+                        "distance_km": round(a.distance_km, 4),
+                        "delivery_cost_pv_10k": round(a.delivery_cost_pv_10k, 4),
+                    }
+                    for a in sorted(best_plan["assignments"], key=lambda x: x.delivery_cost_pv_10k, reverse=True)
+                ],
+            }
+        )
+
+    scenarios = sorted(scenarios, key=lambda x: x["total_cost_10k"])
+    best_scenario = scenarios[0] if scenarios else None
+
+    return {
+        "eligible_rdcs": [
+            {
+                "rdc_id": r.rdc_id,
+                "name": r.name,
+                "city": r.city,
+                "lifecycle_cost_10k": round(c, 4),
+            }
+            for r, c in sorted(eligible_rdcs, key=lambda x: x[1])
+        ],
+        "rejected_rdcs": rejected_rdcs,
+        "network_stores": [asdict(s) for s in full_network_stores],
+        "scenarios": scenarios,
+        "best_scenario": best_scenario,
+    }
+
+
+def run_full_model(
+    store_rows: Sequence[Dict[str, object]],
+    rdc_rows: Sequence[Dict[str, object]],
+    distance_rows: Optional[Sequence[Dict[str, object]]] = None,
+    max_new_stores: int = 8,
+    p_values: Optional[Sequence[int]] = None,
+) -> Dict[str, object]:
+    stores = parse_stores(store_rows)
+    rdcs = parse_rdcs(rdc_rows)
+    distance_matrix = parse_distance_matrix(distance_rows or [])
+
+    stage1 = evaluate_stage1(stores)
+    stage2 = optimize_stage2(stage1, max_new_stores=max_new_stores)
+
+    if p_values is None:
+        p_values = [1, 2, 3]
+    stage3 = optimize_stage3(stores, stage2.get("selected", []), rdcs, distance_matrix, p_values)
+
+    stage1_rows = []
+    for row in stage1:
+        stage1_rows.append(
+            {
+                "store_id": row.store.store_id,
+                "name": row.store.name,
+                "city": row.store.city,
+                "rf_sales_10k": round(row.store.rf_sales_10k, 4),
+                "npv_10k": round(row.npv_10k, 4),
+                "dpp_years": round(row.dpp_years, 4) if row.dpp_years else None,
+                "revenue_per_sqm_10k": round(row.revenue_per_sqm_10k, 4),
+                "passed": row.passed,
+                "reasons": row.reasons,
+            }
+        )
+
+    summary = {
+        "total_store_rows": len(stores),
+        "existing_stores": sum(1 for s in stores if s.is_existing),
+        "new_store_candidates": sum(1 for s in stores if not s.is_existing),
+        "stage1_passed": sum(1 for r in stage1 if r.passed),
+        "stage2_selected": len(stage2.get("selected", [])),
+        "eligible_rdcs": len(stage3.get("eligible_rdcs", [])),
+        "best_p": stage3.get("best_scenario", {}).get("p") if stage3.get("best_scenario") else None,
+        "best_total_cost_10k": stage3.get("best_scenario", {}).get("total_cost_10k") if stage3.get("best_scenario") else None,
+    }
+
+    return {
+        "summary": summary,
+        "stage1": {"rows": stage1_rows},
+        "stage2": stage2,
+        "stage3": stage3,
+    }

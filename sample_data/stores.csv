@@ -1,0 +1,17 @@
+store_id,name,city,lat,lon,rf_sales_10k,area_sqm,initial_investment_10k,annual_fixed_cost_10k,is_existing
+E1,Chaoyang Existing 1,beijing,39.914,116.404,960,118,0,0,1
+E2,Haidian Existing 2,beijing,39.935,116.430,910,112,0,0,1
+E3,Fengtai Existing 3,beijing,39.880,116.390,880,106,0,0,1
+E4,Shijingshan Existing 4,beijing,39.960,116.360,845,104,0,0,1
+N1,Majiabao Block N1,beijing,39.905,116.365,920,110,170,62,0
+N2,Majiabao Block N2,beijing,39.907,116.367,900,105,160,64,0
+N3,Shuangjing Block N3,beijing,39.921,116.446,860,100,150,54,0
+N4,Shuangjing Block N4,beijing,39.927,116.451,740,95,160,70,0
+N5,Yizhuang Block N5,beijing,39.868,116.438,980,115,180,63,0
+N6,Yizhuang Block N6,beijing,39.872,116.442,700,95,150,68,0
+N7,Guomao Block N7,beijing,39.953,116.473,830,108,155,56,0
+N8,Guomao Block N8,beijing,39.948,116.462,780,102,160,66,0
+N9,Fangshan Block N9,beijing,39.889,116.354,910,112,160,58,0
+N10,Fangshan Block N10,beijing,39.893,116.357,650,98,150,72,0
+N11,Xizhimen Block N11,beijing,39.941,116.382,890,109,155,54,0
+N12,Xizhimen Block N12,beijing,39.936,116.375,760,103,160,65,0

@@ -1,0 +1,11 @@
+rdc_id,name,city,lat,lon,area_sqm,initial_investment_10k,annual_rent_10k,annual_property_10k,annual_operating_10k,annual_labor_10k,annual_utility_10k,residual_rate,rent_per_sqm_day,lease_years,blue_access,core_travel_min,clear_height_m,loading_dock,can_three_temp,fire_pass,disturbance_risk
+R1,Majuqiao Hub A,beijing,39.800,116.580,10500,240,520,40,60,55,35,0.25,1.55,8,1,28,9.0,1,1,1,0
+R2,Jingnan Hub B,beijing,39.720,116.320,9800,220,500,38,58,53,33,0.25,1.62,7,1,25,8.5,1,1,1,0
+R3,Shunyi Hub C,beijing,40.100,116.650,11000,230,620,45,65,60,37,0.25,1.95,8,1,26,8.2,1,1,1,0
+R4,Fengtai Hub D,beijing,39.820,116.250,9200,210,480,36,57,51,32,0.25,1.48,6,1,29,7.5,1,1,1,0
+R5,Dongba Hub E,beijing,39.980,116.560,9600,205,460,35,55,50,31,0.25,1.58,4,1,24,7.2,1,1,1,0
+R6,Daxing Hub F,beijing,39.740,116.410,10200,225,510,39,60,54,34,0.25,1.69,8,1,27,8.0,1,1,1,0
+R7,Inner Ring Hub G,beijing,39.930,116.410,8900,200,470,36,56,50,32,0.25,1.52,7,0,18,7.8,1,1,1,0
+R8,Changping Hub H,beijing,40.180,116.250,9700,215,430,33,54,49,30,0.25,1.38,7,1,42,8.1,1,1,1,0
+R9,Tongzhou Hub I,beijing,39.850,116.690,10800,235,540,41,61,56,36,0.25,1.72,6,1,30,8.4,1,1,1,0
+R10,Chaoyang Hub J,beijing,39.950,116.530,9400,205,495,37,58,52,33,0.25,1.76,6,1,26,7.6,1,1,1,1
