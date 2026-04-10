@@ -3,95 +3,201 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>快乐猴联合选址优化平台</title>
+    <title>快乐猴选址展示系统</title>
+    <link
+      rel="stylesheet"
+      href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
+      integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY="
+      crossorigin=""
+    />
     <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}" />
   </head>
   <body>
-    <div class="bg-orb orb-1"></div>
-    <div class="bg-orb orb-2"></div>
+    <div class="bg-grid"></div>
 
-    <main class="page">
-      <section class="hero card reveal">
-        <p class="eyebrow">Site Intelligence Console</p>
-        <h1>快乐猴社区超市 + RDC 联合选址优化</h1>
-        <p>
-          按照你提供的两份方案文档，系统包含三阶段计算：
-          <b>单店 NPV/DPP 初筛</b>、<b>新增门店同类相食优化</b>、<b>P-中值 RDC 联合选址</b>。
-        </p>
-      </section>
+    <header class="topbar">
+      <div>
+        <p class="eyebrow">HappyMonkey Spatial Studio</p>
+        <h1>快乐猴选址展示前端系统</h1>
+      </div>
+      <div class="topbar-note">
+        <p>三阶架构：阶段一扫盘 → 阶段二排他优选 → 阶段三全域网络</p>
+      </div>
+    </header>
 
-      <section class="card reveal delay-1">
-        <h2>1. 上传数据并运行</h2>
-        <form id="modelForm" class="form-grid">
+    <main class="workspace">
+      <section class="card panel panel-left">
+        <h2>参数配置与场景设置区</h2>
+        <form id="modelForm" class="stack">
           <label>
-            门店数据 CSV（必填）
-            <input type="file" name="store_file" accept=".csv" required />
+            城市切换底图
+            <select name="focus_city" id="focusCity">
+              <option value="all">北京 + 杭州（全域）</option>
+              <option value="beijing">北京</option>
+              <option value="hangzhou">杭州</option>
+            </select>
+          </label>
+
+          <div class="city-param-box" id="cityParamBox">
+            <div>WACC：<b id="cityWacc">-</b></div>
+            <div>默认NPV阈值：<b id="cityNpvDefault">-</b></div>
+            <div>默认DPP阈值：<b id="cityDppDefault">-</b></div>
+          </div>
+
+          <label>
+            5年全周期NPV阈值（万元）
+            <input type="number" step="0.1" name="npv_threshold_10k" id="npvThreshold" placeholder="默认随城市" />
           </label>
 
           <label>
-            RDC 数据 CSV（必填）
-            <input type="file" name="rdc_file" accept=".csv" required />
+            动态回收期DPP阈值（年）
+            <input type="number" step="0.1" name="dpp_threshold_years" id="dppThreshold" placeholder="默认2.5" />
           </label>
 
           <label>
-            距离矩阵 CSV（可选）
-            <input type="file" name="distance_file" accept=".csv" />
+            坪效阈值（万元/㎡·年）
+            <input type="number" step="0.1" name="revenue_per_sqm_threshold_10k" id="revenueThreshold" placeholder="默认1.2" />
           </label>
 
           <label>
-            最大新增门店数
+            网络规划控制：RDC数量 Stepper（最大P）
+            <input type="number" id="pStepper" value="3" min="1" max="8" />
+          </label>
+
+          <input type="hidden" name="p_values" id="pValues" value="1,2,3" />
+
+          <label>
+            阶段二最多新增门店数
             <input type="number" name="max_new_stores" value="8" min="1" max="30" />
           </label>
 
+          <div class="switch-row">
+            <label class="inline-check">
+              <input type="checkbox" name="use_road_distance" id="useRoadDistance" />
+              使用高德路网距离（真实GIS）
+            </label>
+          </div>
+
           <label>
-            P 情景（逗号分隔）
-            <input type="text" name="p_values" value="1,2,3" />
+            高德AK（可选，启用路网距离时填写）
+            <input type="text" name="amap_key" id="amapKey" placeholder="你的高德Web服务AK" />
           </label>
+
+          <details>
+            <summary>上传数据文件</summary>
+            <div class="stack padded">
+              <label>
+                门店数据 CSV（必填）
+                <input type="file" name="store_file" accept=".csv" />
+              </label>
+              <label>
+                RDC 数据 CSV（必填）
+                <input type="file" name="rdc_file" accept=".csv" />
+              </label>
+              <label>
+                距离矩阵 CSV（可选）
+                <input type="file" name="distance_file" accept=".csv" />
+              </label>
+            </div>
+          </details>
 
           <div class="actions">
             <button type="submit" class="btn btn-primary">运行上传数据</button>
-            <button type="button" id="runSampleBtn" class="btn btn-ghost">一键运行样例数据</button>
+            <button type="button" id="runSampleBtn" class="btn btn-ghost">运行样例</button>
           </div>
-        </form>
 
-        <div class="hint">
-          <p>样例文件下载：</p>
-          <a href="/api/sample/stores.csv">stores.csv</a>
-          <a href="/api/sample/rdcs.csv">rdcs.csv</a>
-          <a href="/api/sample/distances.csv">distances.csv</a>
+          <div class="sample-links">
+            <a href="/api/sample/stores.csv">stores.csv</a>
+            <a href="/api/sample/rdcs.csv">rdcs.csv</a>
+            <a href="/api/sample/distances.csv">distances.csv</a>
+          </div>
+
+          <pre id="status" class="status">等待运行...</pre>
+        </form>
+      </section>
+
+      <section class="card panel panel-center">
+        <div class="canvas-head">
+          <h2>GIS空间演算区（The Canvas）</h2>
+          <div class="steps" id="timelineSteps">
+            <button class="step active" data-step="stage1">视图1 单块扫盘</button>
+            <button class="step" data-step="stage2">视图2 排他与优选</button>
+            <button class="step" data-step="stage3">视图3 全域网络</button>
+          </div>
         </div>
 
-        <pre id="status" class="status">等待运行...</pre>
+        <div id="map"></div>
+
+        <div class="map-legend">
+          <span><i class="dot pass"></i> 阶段一通过点</span>
+          <span><i class="dot fail"></i> 阶段一淘汰点</span>
+          <span><i class="dot selected"></i> 阶段二入选点</span>
+          <span><i class="line-link"></i> 阶段三RDC配送连线</span>
+        </div>
+
+        <div class="custom-row">
+          <button type="button" id="toggleCustomRdc" class="btn btn-small">开启自定义RDC落点</button>
+          <span id="customHint">点击地图可添加候选RDC；若在五环/绕城内会触发红色告警</span>
+        </div>
       </section>
 
-      <section class="card reveal delay-2">
-        <h2>2. 结果总览</h2>
-        <div id="summaryCards" class="summary-grid"></div>
-      </section>
+      <section class="card panel panel-right">
+        <h2>财务与网络看板</h2>
 
-      <section class="card reveal delay-3">
-        <h2>3. 阶段一：Block 初筛（NPV / DPP / 坪效）</h2>
-        <div id="stage1TableWrap" class="table-wrap"></div>
-      </section>
+        <div class="kpi-grid" id="summaryCards"></div>
 
-      <section class="card reveal delay-4">
-        <h2>4. 阶段二：新增门店组合优化</h2>
-        <div id="stage2TableWrap" class="table-wrap"></div>
-        <div id="distanceAlerts" class="alerts"></div>
-      </section>
+        <section class="mini-section">
+          <h3>全周期折现总成本（RDC vs 配送）</h3>
+          <div id="costBars" class="cost-bars"></div>
+        </section>
 
-      <section class="card reveal delay-5">
-        <h2>5. 阶段三：RDC 多情景（P-中值）</h2>
-        <div id="scenarioChart" class="bars"></div>
-        <div id="scenarioTableWrap" class="table-wrap"></div>
-      </section>
+        <section class="mini-section">
+          <h3>P情景比对</h3>
+          <div id="scenarioCards" class="scenario-cards"></div>
+        </section>
 
-      <section class="card reveal delay-6">
-        <h2>6. 最优情景门店归属</h2>
-        <div id="assignmentTableWrap" class="table-wrap"></div>
+        <section class="mini-section">
+          <h3>关键硬约束提示</h3>
+          <div id="hardAlerts" class="alerts"></div>
+        </section>
       </section>
     </main>
 
+    <section class="card table-card">
+      <h2>阶段一至阶段三明细</h2>
+      <div class="table-tabs">
+        <button class="tab active" data-tab="stage1">阶段一筛选表</button>
+        <button class="tab" data-tab="stage2">阶段二优选表</button>
+        <button class="tab" data-tab="assign">阶段三门店归属表</button>
+      </div>
+      <div id="tableWrap" class="table-wrap"></div>
+    </section>
+
+    <!-- AI Chat Panel -->
+    <button id="chatFab" class="chat-fab" title="AI 选址助手">
+      <svg width="22" height="22" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+        <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>
+      </svg>
+    </button>
+
+    <div id="chatPanel" class="chat-panel">
+      <div class="chat-panel-header">
+        <span>AI 选址助手</span>
+        <button id="chatPanelClose">×</button>
+      </div>
+      <div id="chatModelBadge" class="chat-model-badge">正在连接 OpenClaw...</div>
+      <div id="chatMessages" class="chat-messages"></div>
+      <div class="chat-input-area">
+        <textarea id="chatInput" rows="2" placeholder="问我关于选址结果的任何问题... (Enter 发送)"></textarea>
+        <button id="chatSendBtn" class="btn btn-primary">发送</button>
+      </div>
+    </div>
+
+    <script
+      src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"
+      integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo="
+      crossorigin=""
+    ></script>
     <script src="{{ url_for('static', filename='app.js') }}"></script>
   </body>
 </html>

@@ -5,6 +5,10 @@ This project implements the workflow from:
 - `快乐猴社区超市联合选址优化模型.docx`
 
 It contains a Python backend and a browser UI for end-to-end analysis.
+The frontend follows `快乐猴选址展示前端系统设计方案.docx` with:
+- Parameter panel (city switch + thresholds + P stepper)
+- GIS canvas timeline (stage1/stage2/stage3 map views)
+- Finance & network dashboard (RDC vs delivery cost split)
 
 ## Model Pipeline
 
@@ -23,6 +27,7 @@ It contains a Python backend and a browser UI for end-to-end analysis.
 
 3. Stage 3: RDC + store joint optimization (P-median style)
 - Filter RDCs with hard constraints (truck access, clear height, fire, three-temp, lease term, rent cap, etc.)
+- Enforce same-city assignment (`beijing` stores only served by `beijing` RDCs, likewise for `hangzhou`)
 - For each scenario `P` (e.g. `1,2,3`):
   - choose `P` RDCs
   - assign every store to one opened RDC
@@ -36,6 +41,21 @@ python3 main.py
 ```
 
 Open `http://127.0.0.1:5000` in your browser.
+
+## GIS Features
+
+- City map switch: Beijing / Hangzhou / combined
+- Stage-1 map: pass/fail points with popup cashflow sparkline
+- Stage-2 map: selected new stores + 300m / 500m rings
+- Stage-3 map: RDC-store assignment lines for the best scenario
+- Inner-ring hard alert:
+  - Beijing: approximate 5th-ring policy circle
+  - Hangzhou: approximate ring-expressway policy circle
+- Custom RDC pinning: click map to add candidate RDC points (outside hard-red zone)
+- Optional real road-distance mode:
+  - Enable `use_road_distance`
+  - Fill `amap_key`
+  - Backend calls AMap distance API and uses driving distance matrix
 
 ## Input CSV Format
 
@@ -73,6 +93,11 @@ Columns:
 - `rdc_id,store_id,distance_km`
 
 If omitted for a pair, the model uses haversine distance from lat/lon.
+
+## Optional APIs
+
+- `GET /api/cities`: city GIS + default parameter metadata
+- `POST /api/validate-rdc-point`: validate custom RDC point against inner-ring hard constraint
 
 ## Sample Data
 
