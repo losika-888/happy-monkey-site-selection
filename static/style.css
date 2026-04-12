@@ -665,3 +665,48 @@ th {
     grid-template-columns: 1fr;
   }
 }
+
+.agent-reports {
+  border-top: 1px solid rgba(255, 255, 255, 0.08);
+  padding: 8px 12px;
+  background: rgba(0, 0, 0, 0.15);
+}
+.agent-reports .btn-small {
+  width: 100%;
+  font-size: 12px;
+}
+.agent-reports-list {
+  margin-top: 8px;
+  max-height: 180px;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.agent-reports-list .report-link {
+  display: flex;
+  flex-direction: column;
+  padding: 6px 8px;
+  background: rgba(255, 255, 255, 0.04);
+  border-radius: 6px;
+  text-decoration: none;
+  color: inherit;
+  font-size: 12px;
+}
+.agent-reports-list .report-link:hover {
+  background: rgba(255, 255, 255, 0.1);
+}
+.agent-reports-list .fname {
+  font-weight: 500;
+}
+.agent-reports-list .fmeta {
+  font-size: 10px;
+  opacity: 0.6;
+  margin-top: 2px;
+}
+.agent-reports-list .empty {
+  font-size: 12px;
+  opacity: 0.6;
+  text-align: center;
+  margin: 8px 0;
+}

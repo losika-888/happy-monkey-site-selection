@@ -30,6 +30,7 @@ from optimizer import (
 
 BASE_DIR = Path(__file__).resolve().parent
 SAMPLE_DIR = BASE_DIR / "sample_data"
+AGENT_OUTPUT_DIR = BASE_DIR / "agent_outputs"
 
 app = Flask(__name__, template_folder=str(BASE_DIR / "templates"), static_folder=str(BASE_DIR / "static"))
 
@@ -425,6 +426,30 @@ def chat():
         })
     except RuntimeError as e:
         return jsonify({"error": str(e)}), 502
+
+
+@app.get("/api/agent-outputs")
+def list_agent_outputs():
+    if not AGENT_OUTPUT_DIR.exists():
+        return jsonify({"files": []})
+    files = []
+    for p in AGENT_OUTPUT_DIR.iterdir():
+        if p.is_file() and not p.name.startswith(".") and p.suffix.lower() in {".md", ".txt", ".csv", ".json"}:
+            files.append({"name": p.name, "mtime": p.stat().st_mtime, "size": p.stat().st_size})
+    files.sort(key=lambda x: x["mtime"], reverse=True)
+    return jsonify({"files": files})
+
+
+@app.get("/api/agent-outputs/<path:filename>")
+def download_agent_output(filename: str):
+    from werkzeug.utils import secure_filename
+    safe = secure_filename(filename)
+    if not safe or safe != filename.replace("/", "").replace("..", ""):
+        return jsonify({"error": "invalid filename"}), 400
+    target = AGENT_OUTPUT_DIR / safe
+    if not target.exists() or not target.is_file():
+        return jsonify({"error": "file not found"}), 404
+    return send_from_directory(AGENT_OUTPUT_DIR, safe, as_attachment=True)
 
 
 if __name__ == "__main__":

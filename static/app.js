@@ -816,3 +816,45 @@ async function chatInit() {
 }
 
 chatInit();
+
+// ---- Agent 分析报告列表 ----
+const agentReports = {
+  toggle: document.getElementById("agentReportsToggle"),
+  list: document.getElementById("agentReportsList"),
+  loaded: false,
+};
+
+if (agentReports.toggle) {
+  agentReports.toggle.addEventListener("click", async () => {
+    const hidden = agentReports.list.hasAttribute("hidden");
+    if (hidden) {
+      await loadAgentReports();
+      agentReports.list.removeAttribute("hidden");
+      agentReports.toggle.textContent = "📄 收起报告列表";
+    } else {
+      agentReports.list.setAttribute("hidden", "");
+      agentReports.toggle.textContent = "📄 查看分析报告";
+    }
+  });
+}
+
+async function loadAgentReports() {
+  try {
+    const res = await fetch("/api/agent-outputs");
+    const data = await res.json();
+    const files = data.files || [];
+    if (files.length === 0) {
+      agentReports.list.innerHTML = '<p class="empty">暂无分析报告，先让猴哥生成一份吧</p>';
+      return;
+    }
+    agentReports.list.innerHTML = files
+      .map((f) => {
+        const dt = new Date(f.mtime * 1000).toLocaleString("zh-CN", { hour12: false });
+        const kb = (f.size / 1024).toFixed(1);
+        return `<a class="report-link" href="/api/agent-outputs/${encodeURIComponent(f.name)}" target="_blank"><span class="fname">${f.name}</span><span class="fmeta">${dt} · ${kb} KB</span></a>`;
+      })
+      .join("");
+  } catch (e) {
+    agentReports.list.innerHTML = `<p class="empty">加载失败：${e.message}</p>`;
+  }
+}
