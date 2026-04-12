@@ -11,7 +11,7 @@ from urllib.parse import urlencode
 from urllib.request import Request, urlopen
 
 DEEPSEEK_BASE = "https://api.deepseek.com/v1"
-DEEPSEEK_TOKEN = os.environ.get("DEEPSEEK_TOKEN", "sk-e696900868414f62bb8614f55bbb866b")
+DEEPSEEK_TOKEN = os.environ.get("DEEPSEEK_TOKEN", "")
 DEEPSEEK_MODEL = "deepseek-chat"
 
 from flask import Flask, jsonify, render_template, request, send_from_directory
@@ -428,4 +428,7 @@ def chat():
 
 
 if __name__ == "__main__":
-    app.run(host="127.0.0.1", port=5000, debug=True)
+    host = os.environ.get("FLASK_HOST", "127.0.0.1")
+    port = int(os.environ.get("FLASK_PORT", "5000"))
+    debug = os.environ.get("FLASK_DEBUG", "0") == "1"
+    app.run(host=host, port=port, debug=debug)

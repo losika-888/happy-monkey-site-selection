@@ -10,9 +10,11 @@ import uuid
 
 import websocket
 
-WS_URL = "wss://yyb-openclaw.site"
-TOKEN = "50f30c13810d0ce98b300fec63a284c28ffa195d63b4536d"
-AGENT_ID = "main"
+import os
+
+WS_URL = os.environ.get("OPENCLAW_WS_URL", "wss://yyb-openclaw.site")
+TOKEN = os.environ.get("OPENCLAW_TOKEN", "")
+AGENT_ID = os.environ.get("OPENCLAW_AGENT_ID", "main")
 
 CONNECT_PARAMS = {
     "minProtocol": 3,
