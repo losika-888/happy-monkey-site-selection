@@ -8,10 +8,17 @@ const state = {
   customViolations: [],
   map: null,
   layers: {},
+  markerScale: 1,
+  lineOpacity: 0.65,
+  showPolicyRings: true,
+  autoFitMap: true,
+  stageCycleTimer: null,
+  stageCycling: false,
 };
 
 const els = {
   modelForm: document.getElementById("modelForm"),
+  modelSubmitBtn: document.querySelector('#modelForm button[type="submit"]'),
   runSampleBtn: document.getElementById("runSampleBtn"),
   focusCity: document.getElementById("focusCity"),
   pStepper: document.getElementById("pStepper"),
@@ -28,13 +35,28 @@ const els = {
   hardAlerts: document.getElementById("hardAlerts"),
   tableWrap: document.getElementById("tableWrap"),
   timelineSteps: document.getElementById("timelineSteps"),
+  stepIntro: document.getElementById("stepIntro"),
   tableTabs: document.querySelectorAll(".tab"),
   toggleCustomRdc: document.getElementById("toggleCustomRdc"),
   customHint: document.getElementById("customHint"),
+  markerScale: document.getElementById("markerScale"),
+  lineOpacity: document.getElementById("lineOpacity"),
+  showPolicyRings: document.getElementById("showPolicyRings"),
+  autoFitMap: document.getElementById("autoFitMap"),
+  cycleStagesBtn: document.getElementById("cycleStagesBtn"),
+  interactionState: document.getElementById("interactionState"),
 };
 
-function setStatus(text) {
+function inferStatusState(text) {
+  if (/(失败|错误|异常|违规|校验失败)/.test(text)) return "error";
+  if (/(成功|就绪|已更新|已添加)/.test(text)) return "success";
+  if (/(运行中|加载|初始化|正在)/.test(text)) return "loading";
+  return "idle";
+}
+
+function setStatus(text, statusState = inferStatusState(text)) {
   els.status.textContent = text;
+  els.status.dataset.state = statusState;
 }
 
 function fmt(value, digits = 2) {
@@ -49,6 +71,48 @@ function buildPValues() {
   const values = [];
   for (let i = 1; i <= maxP; i += 1) values.push(i);
   els.pValues.value = values.join(",");
+}
+
+function setRunButtonsBusy(isBusy) {
+  if (els.modelSubmitBtn) {
+    els.modelSubmitBtn.disabled = isBusy;
+    els.modelSubmitBtn.textContent = isBusy ? "运行中..." : "运行上传数据";
+  }
+  if (els.runSampleBtn) {
+    els.runSampleBtn.disabled = isBusy;
+    els.runSampleBtn.textContent = isBusy ? "运行中..." : "运行样例";
+  }
+}
+
+function updateInteractionStateText() {
+  if (!els.interactionState) return;
+  const mode = state.stageCycling ? "自动轮播中" : "手动模式";
+  const ring = state.showPolicyRings ? "圈层显示" : "圈层隐藏";
+  const fit = state.autoFitMap ? "自动缩放开" : "自动缩放关";
+  els.interactionState.textContent = `当前：${mode} · ${ring} · ${fit}`;
+}
+
+function setStageCycling(active) {
+  state.stageCycling = Boolean(active);
+  if (state.stageCycleTimer) {
+    clearInterval(state.stageCycleTimer);
+    state.stageCycleTimer = null;
+  }
+
+  if (state.stageCycling) {
+    const order = ["stage1", "stage2", "stage3"];
+    state.stageCycleTimer = window.setInterval(() => {
+      const idx = order.indexOf(state.step);
+      const next = order[(idx + 1) % order.length];
+      setActiveStep(next);
+    }, 2800);
+  }
+
+  if (els.cycleStagesBtn) {
+    els.cycleStagesBtn.textContent = state.stageCycling ? "停止轮播" : "自动轮播";
+    els.cycleStagesBtn.classList.toggle("active", state.stageCycling);
+  }
+  updateInteractionStateText();
 }
 
 function sparklineSVG(values) {
@@ -186,6 +250,43 @@ function cityMatch(value) {
   return String(value || "") === focus;
 }
 
+function updateStepIntro() {
+  if (!els.stepIntro) return;
+
+  const defaultCopy = {
+    stage1: "阶段一：查看候选门店在 NPV、DPP 和坪效阈值下的通过情况。",
+    stage2: "阶段二：在排他约束下优选门店组合，观察修正后的财务结果。",
+    stage3: "阶段三：对比不同 P 情景下的 RDC 网络结构与总成本。",
+  };
+
+  if (!state.result) {
+    els.stepIntro.textContent = defaultCopy[state.step] || defaultCopy.stage1;
+    return;
+  }
+
+  if (state.step === "stage1") {
+    const rows = (state.result.stage1?.rows || []).filter((r) => cityMatch(r.city));
+    const passed = rows.filter((r) => Boolean(r.passed)).length;
+    els.stepIntro.textContent = `阶段一：当前视图共 ${rows.length} 个候选门店，其中 ${passed} 个通过硬约束筛选。`;
+    return;
+  }
+
+  if (state.step === "stage2") {
+    const selected = (state.result.stage2?.selected || []).filter((r) => cityMatch(r.city));
+    els.stepIntro.textContent = `阶段二：当前城市入选门店 ${selected.length} 家，可在地图中查看排他后最终点位。`;
+    return;
+  }
+
+  const bestScenario = state.result.stage3?.best_scenario;
+  if (bestScenario) {
+    const assignmentCount = (bestScenario.assignments || []).filter((r) => cityMatch(r.store_city)).length;
+    els.stepIntro.textContent = `阶段三：最优 P=${bestScenario.p}，当前视图包含 ${assignmentCount} 条门店归属关系。`;
+    return;
+  }
+
+  els.stepIntro.textContent = defaultCopy.stage3;
+}
+
 function fitBoundsIfAny(latlngs) {
   if (!state.map || !latlngs.length) return;
   const bounds = L.latLngBounds(latlngs);
@@ -198,11 +299,22 @@ function renderStepLayers() {
   clearLayer(state.layers.stage3);
 
   if (!state.result || !state.map) {
-    drawBaseCityOverlays();
+    if (state.showPolicyRings) {
+      drawBaseCityOverlays();
+    } else {
+      clearLayer(state.layers.base);
+    }
     return;
   }
 
-  drawBaseCityOverlays();
+  if (state.showPolicyRings) {
+    drawBaseCityOverlays();
+  } else {
+    clearLayer(state.layers.base);
+  }
+
+  const markerScale = Math.max(0.6, Number(state.markerScale) || 1);
+  const lineOpacity = Math.min(1, Math.max(0.15, Number(state.lineOpacity) || 0.65));
 
   const points = state.result?.gis?.stage1_points || [];
   const selected = state.result?.gis?.stage2_selected || [];
@@ -214,7 +326,7 @@ function renderStepLayers() {
   if (state.step === "stage1") {
     points.filter((p) => cityMatch(p.city)).forEach((p) => {
       const marker = L.circleMarker([p.lat, p.lon], {
-        radius: 5,
+        radius: 5 * markerScale,
         color: p.passed ? "#1b8f5a" : "#c63f38",
         fillColor: p.passed ? "#1b8f5a" : "#c63f38",
         fillOpacity: 0.9,
@@ -230,7 +342,7 @@ function renderStepLayers() {
   if (state.step === "stage2") {
     points.filter((p) => cityMatch(p.city)).forEach((p) => {
       L.circleMarker([p.lat, p.lon], {
-        radius: 4,
+        radius: 4 * markerScale,
         color: p.passed ? "#2c9f6a" : "#c9524a",
         fillColor: p.passed ? "#2c9f6a" : "#c9524a",
         fillOpacity: 0.45,
@@ -255,7 +367,7 @@ function renderStepLayers() {
       }).addTo(state.layers.stage2);
 
       L.circleMarker([s.lat, s.lon], {
-        radius: 6,
+        radius: 6 * markerScale,
         color: "#f0a32f",
         fillColor: "#f0a32f",
         fillOpacity: 1,
@@ -269,7 +381,7 @@ function renderStepLayers() {
   if (state.step === "stage3") {
     openRdcs.filter((r) => cityMatch(r.city)).forEach((rdc) => {
       L.circleMarker([rdc.lat, rdc.lon], {
-        radius: 7,
+        radius: 7 * markerScale,
         color: "#0a4f9e",
         fillColor: "#2571d8",
         fillOpacity: 0.95,
@@ -290,7 +402,7 @@ function renderStepLayers() {
           {
             color: "#2878ff",
             weight: 1.6,
-            opacity: 0.65,
+            opacity: lineOpacity,
           }
         )
           .bindPopup(
@@ -299,7 +411,7 @@ function renderStepLayers() {
           .addTo(state.layers.stage3);
 
         L.circleMarker([line.store_lat, line.store_lon], {
-          radius: 4,
+          radius: 4 * markerScale,
           color: "#2f9a5c",
           fillColor: "#2f9a5c",
           fillOpacity: 0.8,
@@ -313,7 +425,7 @@ function renderStepLayers() {
   clearLayer(state.layers.custom);
   state.customRdcs.forEach((rdc) => {
     L.circleMarker([rdc.lat, rdc.lon], {
-      radius: 7,
+      radius: 7 * markerScale,
       color: "#5a2ca0",
       fillColor: "#7d4ac2",
       fillOpacity: 0.9,
@@ -328,7 +440,7 @@ function renderStepLayers() {
     if (cfg) {
       state.map.setView(cfg.center, cfg.zoom || 10);
     }
-  } else {
+  } else if (state.autoFitMap) {
     fitBoundsIfAny(fit);
   }
 }
@@ -515,6 +627,7 @@ function renderTableByTab() {
 
 function refreshAllViews() {
   updateCityParamPanel();
+  updateStepIntro();
   renderSummary();
   renderCostBars();
   renderScenarioCards();
@@ -536,9 +649,11 @@ function createPayloadFromForm(includeFiles = true) {
   buildPValues();
   const fd = includeFiles ? new FormData(els.modelForm) : new FormData();
 
+  // focusCity lives in the top-nav (outside <form>), make sure it's always sent
+  fd.set("focus_city", els.focusCity.value);
+
   if (!includeFiles) {
     [
-      "focus_city",
       "max_new_stores",
       "p_values",
       "use_road_distance",
@@ -564,15 +679,18 @@ function createPayloadFromForm(includeFiles = true) {
 
 async function runModel(url, includeFiles = true) {
   const payload = createPayloadFromForm(includeFiles);
-  setStatus("模型运行中，请稍候...");
+  setRunButtonsBusy(true);
+  setStatus("模型运行中，请稍候...", "loading");
   try {
     const result = await postForm(url, payload);
     state.result = result;
     refreshAllViews();
     const info = result?.meta?.distance_source ? `\n距离来源：${result.meta.distance_source}` : "";
-    setStatus(`运行成功，已更新GIS视图与看板。${info}`);
+    setStatus(`运行成功，已更新GIS视图与看板。${info}`, "success");
   } catch (err) {
-    setStatus(`运行失败：${err.message}`);
+    setStatus(`运行失败：${err.message}`, "error");
+  } finally {
+    setRunButtonsBusy(false);
   }
 }
 
@@ -585,15 +703,20 @@ async function fetchCityConfigs() {
 function setActiveStep(step) {
   state.step = step;
   document.querySelectorAll(".step").forEach((btn) => {
-    btn.classList.toggle("active", btn.dataset.step === step);
+    const isActive = btn.dataset.step === step;
+    btn.classList.toggle("active", isActive);
+    btn.setAttribute("aria-selected", String(isActive));
   });
+  updateStepIntro();
   renderStepLayers();
 }
 
 function setActiveTableTab(tab) {
   state.tableTab = tab;
   document.querySelectorAll(".tab").forEach((btn) => {
-    btn.classList.toggle("active", btn.dataset.tab === tab);
+    const isActive = btn.dataset.tab === tab;
+    btn.classList.toggle("active", isActive);
+    btn.setAttribute("aria-selected", String(isActive));
   });
   renderTableByTab();
 }
@@ -657,12 +780,16 @@ function bindEvents() {
 
   els.focusCity.addEventListener("change", () => {
     updateCityParamPanel();
+    updateStepIntro();
     renderStepLayers();
     renderTableByTab();
   });
 
   document.querySelectorAll(".step").forEach((btn) => {
-    btn.addEventListener("click", () => setActiveStep(btn.dataset.step));
+    btn.addEventListener("click", () => {
+      if (state.stageCycling) setStageCycling(false);
+      setActiveStep(btn.dataset.step);
+    });
   });
 
   document.querySelectorAll(".tab").forEach((btn) => {
@@ -671,25 +798,77 @@ function bindEvents() {
 
   els.toggleCustomRdc.addEventListener("click", () => {
     state.customRdcMode = !state.customRdcMode;
-    els.toggleCustomRdc.textContent = state.customRdcMode ? "关闭自定义RDC落点" : "开启自定义RDC落点";
+    els.toggleCustomRdc.textContent = state.customRdcMode ? "关闭自定义" : "自定义 RDC";
+    els.toggleCustomRdc.classList.toggle("active", state.customRdcMode);
     els.customHint.textContent = state.customRdcMode
-      ? "自定义RDC模式已开启：点击地图添加候选点。"
-      : "点击地图可添加候选RDC；若在五环/绕城内会触发红色告警";
+      ? "自定义模式已开启：点击地图添加候选 RDC 点。"
+      : "点击地图可添加候选 RDC；若落入五环 / 绕城内会触发红色告警。";
   });
+
+  if (els.markerScale) {
+    els.markerScale.addEventListener("input", () => {
+      state.markerScale = Number(els.markerScale.value) || 1;
+      renderStepLayers();
+    });
+  }
+
+  if (els.lineOpacity) {
+    els.lineOpacity.addEventListener("input", () => {
+      state.lineOpacity = Number(els.lineOpacity.value) || 0.65;
+      renderStepLayers();
+    });
+  }
+
+  if (els.showPolicyRings) {
+    els.showPolicyRings.addEventListener("change", () => {
+      state.showPolicyRings = Boolean(els.showPolicyRings.checked);
+      renderStepLayers();
+      updateInteractionStateText();
+    });
+  }
+
+  if (els.autoFitMap) {
+    els.autoFitMap.addEventListener("change", () => {
+      state.autoFitMap = Boolean(els.autoFitMap.checked);
+      updateInteractionStateText();
+    });
+  }
+
+  if (els.cycleStagesBtn) {
+    els.cycleStagesBtn.addEventListener("click", () => {
+      setStageCycling(!state.stageCycling);
+    });
+  }
+
+  const dockToggle = document.getElementById("dockToggle");
+  const mapDock = document.getElementById("mapDock");
+  if (dockToggle && mapDock) {
+    dockToggle.addEventListener("click", () => {
+      mapDock.classList.toggle("collapsed");
+      if (state.map) setTimeout(() => state.map.invalidateSize(), 300);
+    });
+  }
 }
 
 async function boot() {
-  setStatus("正在加载城市参数与GIS底图...");
+  setStatus("正在加载城市参数与GIS底图...", "loading");
   buildPValues();
   initMap();
+
+  if (els.markerScale) state.markerScale = Number(els.markerScale.value) || 1;
+  if (els.lineOpacity) state.lineOpacity = Number(els.lineOpacity.value) || 0.65;
+  if (els.showPolicyRings) state.showPolicyRings = Boolean(els.showPolicyRings.checked);
+  if (els.autoFitMap) state.autoFitMap = Boolean(els.autoFitMap.checked);
+  updateInteractionStateText();
 
   try {
     await fetchCityConfigs();
     updateCityParamPanel();
+    updateStepIntro();
     drawBaseCityOverlays();
-    setStatus("系统就绪。可上传CSV运行，或直接运行样例。");
+    setStatus("系统就绪。可上传CSV运行，或直接运行样例。", "success");
   } catch (err) {
-    setStatus(`初始化失败：${err.message}`);
+    setStatus(`初始化失败：${err.message}`, "error");
   }
 
   bindEvents();
@@ -697,22 +876,52 @@ async function boot() {
 
 boot();
 
-// ---- AI Chat Panel ----
+// ---- AI Chat Panel (3-mode: mini / expand / focus) ----
 const chat = {
   panel: document.getElementById("chatPanel"),
   fab: document.getElementById("chatFab"),
   closeBtn: document.getElementById("chatPanelClose"),
+  minBtn: document.getElementById("chatMinBtn"),
+  expandBtn: document.getElementById("chatExpandBtn"),
+  focusBtn: document.getElementById("chatFocusBtn"),
   messages: document.getElementById("chatMessages"),
   input: document.getElementById("chatInput"),
   sendBtn: document.getElementById("chatSendBtn"),
   modelBadge: document.getElementById("chatModelBadge"),
   history: [],
   model: "",
-  sessionKey: "",   // OpenClaw 会话 key，跨消息保持记忆
+  sessionKey: "",
+  mode: "mini",
 };
 
-chat.fab.addEventListener("click", () => chat.panel.classList.toggle("open"));
-chat.closeBtn.addEventListener("click", () => chat.panel.classList.remove("open"));
+function setChatMode(mode) {
+  chat.mode = mode;
+  chat.panel.setAttribute("data-mode", mode);
+  document.body.classList.toggle("chat-focus", mode === "focus");
+  // invalidate leaflet size after transition finishes so map re-renders
+  if (state.map) {
+    setTimeout(() => state.map.invalidateSize(), 340);
+  }
+}
+
+function openChat() {
+  chat.panel.classList.add("open");
+  chat.panel.setAttribute("aria-hidden", "false");
+  document.body.classList.add("chat-open");
+}
+function closeChat() {
+  chat.panel.classList.remove("open");
+  chat.panel.setAttribute("aria-hidden", "true");
+  document.body.classList.remove("chat-open");
+  document.body.classList.remove("chat-focus");
+  if (state.map) setTimeout(() => state.map.invalidateSize(), 340);
+}
+
+chat.fab.addEventListener("click", openChat);
+chat.closeBtn.addEventListener("click", closeChat);
+if (chat.minBtn) chat.minBtn.addEventListener("click", () => setChatMode("mini"));
+if (chat.expandBtn) chat.expandBtn.addEventListener("click", () => setChatMode("expand"));
+if (chat.focusBtn) chat.focusBtn.addEventListener("click", () => setChatMode("focus"));
 
 chat.input.addEventListener("keydown", (e) => {
   if (e.key === "Enter" && !e.shiftKey) {

@@ -40,7 +40,7 @@ python3 -m pip install -r requirements.txt
 python3 main.py
 ```
 
-Open `http://127.0.0.1:5000` in your browser.
+Open `http://43.133.46.51:5001` in your browser.
 
 ## GIS Features
 
