@@ -66,6 +66,14 @@ function fmt(value, digits = 2) {
   return num.toFixed(digits);
 }
 
+function fmtPct(value, digits = 1) {
+  if (value === null || value === undefined || value === "") return "—";
+  const num = Number(value);
+  if (!Number.isFinite(num)) return "—";
+  const sign = num > 0 ? "+" : "";
+  return `${sign}${(num * 100).toFixed(digits)}%`;
+}
+
 function buildPValues() {
   const maxP = Math.max(1, Math.min(8, Number(els.pStepper.value) || 3));
   const values = [];
@@ -174,6 +182,22 @@ function initMap() {
   state.layers.custom = L.layerGroup().addTo(state.map);
 
   state.map.on("click", onMapClickAddCustomRdc);
+
+  // Wire up delete buttons inside custom-RDC popups after they open.
+  state.map.on("popupopen", (evt) => {
+    const root = evt.popup.getElement && evt.popup.getElement();
+    if (!root) return;
+    const btn = root.querySelector(".custom-rdc-del");
+    if (!btn) return;
+    btn.addEventListener("click", (e) => {
+      e.stopPropagation();
+      const id = btn.dataset.id;
+      state.customRdcs = state.customRdcs.filter((r) => r.rdc_id !== id);
+      state.map.closePopup();
+      renderStepLayers();
+      setStatus(`已删除自定义RDC ${id}`, "success");
+    });
+  });
 }
 
 function clearLayer(layer) {
@@ -206,11 +230,13 @@ function updateCityParamPanel() {
   els.cityNpvDefault.textContent = fmt(p.npv_threshold_10k, 1);
   els.cityDppDefault.textContent = fmt(p.dpp_threshold_years, 1);
 
-  if (!els.npvThreshold.value) {
-    els.npvThreshold.placeholder = `默认${fmt(p.npv_threshold_10k, 1)}`;
-  }
-  if (!els.dppThreshold.value) {
-    els.dppThreshold.placeholder = `默认${fmt(p.dpp_threshold_years, 1)}`;
+  // Always refresh placeholders so they reflect the current focus city, even
+  // if the user has previously typed something.
+  els.npvThreshold.placeholder = `默认${fmt(p.npv_threshold_10k, 1)}`;
+  els.dppThreshold.placeholder = `默认${fmt(p.dpp_threshold_years, 1)}`;
+  const revEl = document.getElementById("revenueThreshold");
+  if (revEl && p.revenue_per_sqm_threshold_10k != null) {
+    revEl.placeholder = `默认${fmt(p.revenue_per_sqm_threshold_10k, 1)}`;
   }
 }
 
@@ -424,13 +450,21 @@ function renderStepLayers() {
   // custom rdcs always visible
   clearLayer(state.layers.custom);
   state.customRdcs.forEach((rdc) => {
+    const popupHtml = `
+      <div class="custom-rdc-popup">
+        <b>${rdc.name}</b><br/>
+        ${rdc.city}<br/>
+        自定义候选 RDC<br/>
+        <button type="button" class="custom-rdc-del btn btn-small" data-id="${rdc.rdc_id}">删除该点位</button>
+      </div>
+    `;
     L.circleMarker([rdc.lat, rdc.lon], {
       radius: 7 * markerScale,
       color: "#5a2ca0",
       fillColor: "#7d4ac2",
       fillOpacity: 0.9,
     })
-      .bindPopup(`<b>${rdc.name}</b><br/>${rdc.city}<br/>自定义候选RDC`)
+      .bindPopup(popupHtml)
       .addTo(state.layers.custom);
     fit.push([rdc.lat, rdc.lon]);
   });
@@ -520,7 +554,7 @@ function renderScenarioCards() {
           <b>P=${s.p}</b><br/>
           总成本：${fmt(s.total_cost_10k)} 万元<br/>
           平均距离：${fmt(s.avg_distance_km)} km<br/>
-          ROI：${fmt(s.roi, 3)}
+          ROI：${fmtPct(s.roi, 1)}
         </div>
       `;
     })
@@ -830,6 +864,7 @@ function bindEvents() {
   if (els.autoFitMap) {
     els.autoFitMap.addEventListener("change", () => {
       state.autoFitMap = Boolean(els.autoFitMap.checked);
+      renderStepLayers();
       updateInteractionStateText();
     });
   }
@@ -947,20 +982,23 @@ function buildSystemContext() {
   const stage1 = r.stage1 || {};
   const stage2 = r.stage2 || {};
   const stage3 = r.stage3 || {};
-  const candidates = stage1.candidates || [];
-  const passCount = candidates.filter((c) => c.pass).length;
-  const selectedCount = (stage2.selected_stores || []).length;
+
+  // Backend contract: stage1.rows[].passed, stage2.selected[], stage3.best_scenario
+  const rows = stage1.rows || [];
+  const passCount = rows.filter((row) => Boolean(row.passed)).length;
+  const selectedCount = (stage2.selected || []).length;
+  const eligibleCount = (stage3.eligible_rdcs || []).length;
+  const rejectedCount = (stage3.rejected_rdcs || []).length;
 
   let ctx = `你是快乐猴选址展示系统的AI分析助手，请用中文简洁回答用户问题。\n\n当前分析结果摘要：\n`;
-  ctx += `- 阶段一：共 ${candidates.length} 个候选门店，${passCount} 个通过筛选，${candidates.length - passCount} 个淘汰\n`;
-  ctx += `- 阶段二：从通过门店中优选出 ${selectedCount} 家新开门店\n`;
+  ctx += `- 阶段一：共 ${rows.length} 个候选门店，${passCount} 个通过筛选，${rows.length - passCount} 个淘汰\n`;
+  ctx += `- 阶段二：排他后优选出 ${selectedCount} 家新开门店\n`;
+  ctx += `- 阶段三：合规 RDC ${eligibleCount} 个（被剔除 ${rejectedCount} 个）\n`;
 
-  if (stage3.scenarios && stage3.scenarios.length > 0) {
-    const bestP = stage3.best_p || 1;
-    const best = stage3.scenarios.find((s) => s.p === bestP) || stage3.scenarios[0];
-    if (best) {
-      ctx += `- 阶段三：最优 RDC 数量为 ${bestP} 个，总成本约 ${fmt(best.total_cost_10k)} 万元\n`;
-    }
+  const best = stage3.best_scenario;
+  if (best && best.p != null) {
+    ctx += `- 最优情景：P=${best.p}，总成本 ${fmt(best.total_cost_10k)} 万元，`;
+    ctx += `平均配送距离 ${fmt(best.avg_distance_km)} km，ROI ${fmtPct(best.roi, 1)}\n`;
   }
 
   return ctx;

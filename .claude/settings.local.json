@@ -1,0 +1,14 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(wc -l /Users/philyang/Desktop/美团商赛/happy_monkey/*.py /Users/philyang/Desktop/美团商赛/happy_monkey/*.md)",
+      "Bash(head -5 /Users/philyang/Desktop/美团商赛/happy_monkey/sample_data/*.csv)",
+      "Bash(python3 -m py_compile optimizer.py app.py main.py)",
+      "Bash(node -c static/app.js)",
+      "Bash(python3 -c ':*)",
+      "Bash(python3 -m py_compile app.py)",
+      "Bash(ls /Users/philyang/Desktop/美团商赛/happy_monkey/deploy*)",
+      "Bash(./deploy.sh \"fix: harden agent-outputs download path validation\")"
+    ]
+  }
+}

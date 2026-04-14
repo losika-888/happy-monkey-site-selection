@@ -309,7 +309,11 @@ def run_model():
         generated_distance_rows, amap_warnings = build_amap_distance_rows(store_rows, rdc_rows, amap_key)
         distance_source = "amap_driving+uploaded_fallback"
 
-    distance_rows = merge_distance_rows(generated_distance_rows, uploaded_distance_rows)
+    # merge_distance_rows: secondary overwrites primary.
+    # When Amap is enabled we want it to be authoritative and fall back to the
+    # uploaded file only for pairs Amap couldn't resolve — so uploaded is the
+    # primary (base layer) and Amap results are layered on top.
+    distance_rows = merge_distance_rows(uploaded_distance_rows, generated_distance_rows)
 
     try:
         result = run_full_model(
@@ -366,7 +370,11 @@ def run_sample_model():
         generated_distance_rows, amap_warnings = build_amap_distance_rows(store_rows, rdc_rows, amap_key)
         distance_source = "sample+amap_driving+uploaded_fallback"
 
-    distance_rows = merge_distance_rows(generated_distance_rows, uploaded_distance_rows)
+    # merge_distance_rows: secondary overwrites primary.
+    # When Amap is enabled we want it to be authoritative and fall back to the
+    # uploaded file only for pairs Amap couldn't resolve — so uploaded is the
+    # primary (base layer) and Amap results are layered on top.
+    distance_rows = merge_distance_rows(uploaded_distance_rows, generated_distance_rows)
 
     try:
         result = run_full_model(
@@ -442,14 +450,22 @@ def list_agent_outputs():
 
 @app.get("/api/agent-outputs/<path:filename>")
 def download_agent_output(filename: str):
-    from werkzeug.utils import secure_filename
-    safe = secure_filename(filename)
-    if not safe or safe != filename.replace("/", "").replace("..", ""):
+    if not filename or "/" in filename or "\\" in filename or filename.startswith("."):
         return jsonify({"error": "invalid filename"}), 400
-    target = AGENT_OUTPUT_DIR / safe
+
+    base_dir = AGENT_OUTPUT_DIR.resolve()
+    target = (base_dir / filename).resolve()
+    try:
+        target.relative_to(base_dir)
+    except ValueError:
+        return jsonify({"error": "invalid filename"}), 400
+
     if not target.exists() or not target.is_file():
         return jsonify({"error": "file not found"}), 404
-    return send_from_directory(AGENT_OUTPUT_DIR, safe, as_attachment=True)
+    if target.suffix.lower() not in {".md", ".txt", ".csv", ".json"}:
+        return jsonify({"error": "unsupported file type"}), 400
+
+    return send_from_directory(base_dir, target.name, as_attachment=True)
 
 
 if __name__ == "__main__":

@@ -13,7 +13,7 @@ CITY_PARAMS: Dict[str, Dict[str, object]] = {
         "gross_margin": 0.21,
         "variable_cost_rate": 0.045,
         "tax_rate": 0.025,
-        "residual_rate": 0.15,
+        "store_residual_rate": 0.15,
         "growth": [0.9, 1.0, 1.08, 1.12, 1.12],
         "delivery_freq": 104,
         "delivery_fixed_cost": 120.0,
@@ -31,7 +31,7 @@ CITY_PARAMS: Dict[str, Dict[str, object]] = {
         "gross_margin": 0.22,
         "variable_cost_rate": 0.042,
         "tax_rate": 0.025,
-        "residual_rate": 0.15,
+        "store_residual_rate": 0.15,
         "growth": [0.9, 1.0, 1.08, 1.12, 1.12],
         "delivery_freq": 104,
         "delivery_fixed_cost": 110.0,
@@ -51,7 +51,7 @@ DEFAULT_CITY_PARAMS = {
     "gross_margin": 0.215,
     "variable_cost_rate": 0.043,
     "tax_rate": 0.025,
-    "residual_rate": 0.15,
+    "store_residual_rate": 0.15,
     "growth": [0.9, 1.0, 1.08, 1.12, 1.12],
     "delivery_freq": 104,
     "delivery_fixed_cost": 115.0,
@@ -380,7 +380,7 @@ def evaluate_stage1(
         gross_margin = float(cp["gross_margin"])
         variable_rate = float(cp["variable_cost_rate"])
         tax_rate = float(cp["tax_rate"])
-        residual_rate = float(cp["residual_rate"])
+        residual_rate = float(cp["store_residual_rate"])
 
         npv_threshold = float(cp["npv_threshold_10k"])
         dpp_threshold = float(cp["dpp_threshold_years"])
@@ -457,28 +457,50 @@ def pairwise_distance_km(stores: Sequence[Stage1Result]) -> Dict[Tuple[str, str]
 
 
 def attenuation_for_pair(distance_km: float) -> float:
-    if distance_km < 0.3:
+    # Hard conflict zone: d < 280m
+    # Smooth transition 280-320m: penalty linearly drops from 1.0 -> 0.35
+    # Soft zone 320-500m: penalty linearly drops from 0.35 -> 0
+    # Beyond 500m: no penalty
+    if distance_km < 0.28:
         return 1.0
+    if distance_km < 0.32:
+        t = (distance_km - 0.28) / 0.04
+        return 1.0 + t * (0.35 - 1.0)
     if distance_km < 0.5:
-        scaled = (0.5 - distance_km) / 0.2
+        scaled = (0.5 - distance_km) / 0.18
         return 0.35 * max(0.0, min(1.0, scaled))
     return 0.0
 
 
-def recompute_adjusted_dpp(base_result: Stage1Result, attenuation_ratio: float) -> Optional[float]:
+def _recompute_adjusted_cashflows(base_result: Stage1Result, attenuation_ratio: float) -> Tuple[List[float], float]:
+    """
+    Attenuate operating cashflows by `attenuation_ratio` while keeping residual
+    value untouched (residual is asset recovery, not demand-driven).
+    Returns (discounted_cashflows, initial_investment).
+    """
     cp = city_params(base_result.store.city)
     discount_rate = float(cp["discount_rate"])
-    discounted: List[float] = []
     years = len(base_result.yearly_cashflow_10k)
-    residual = base_result.store.initial_investment_10k * float(cp["residual_rate"])
+    residual = base_result.store.initial_investment_10k * float(cp["store_residual_rate"])
 
+    discounted: List[float] = []
     for idx, cf in enumerate(base_result.yearly_cashflow_10k, start=1):
-        adjusted_cf = cf * attenuation_ratio
         if idx == years:
             adjusted_cf = (cf - residual) * attenuation_ratio + residual
+        else:
+            adjusted_cf = cf * attenuation_ratio
         discounted.append(adjusted_cf / ((1.0 + discount_rate) ** idx))
+    return discounted, base_result.store.initial_investment_10k
 
-    return compute_dpp(discounted, base_result.store.initial_investment_10k)
+
+def recompute_adjusted_dpp(base_result: Stage1Result, attenuation_ratio: float) -> Optional[float]:
+    discounted, initial = _recompute_adjusted_cashflows(base_result, attenuation_ratio)
+    return compute_dpp(discounted, initial)
+
+
+def recompute_adjusted_npv(base_result: Stage1Result, attenuation_ratio: float) -> float:
+    discounted, initial = _recompute_adjusted_cashflows(base_result, attenuation_ratio)
+    return -initial + sum(discounted)
 
 
 def optimize_stage2(
@@ -533,7 +555,6 @@ def optimize_stage2(
 
             combo_set = set(combo)
             score = 0.0
-            valid = True
             bundle: List[Stage2StoreResult] = []
 
             for sid in combo:
@@ -551,12 +572,10 @@ def optimize_stage2(
                 penalty = min(0.45, penalty)
                 attenuation_ratio = max(0.0, 1.0 - penalty)
                 adjusted_sales = base.store.rf_sales_10k * attenuation_ratio
-                adjusted_npv = base.npv_10k * attenuation_ratio
+                # Only operating cashflows are attenuated; initial capex and
+                # residual value are invariant to neighboring cannibalization.
+                adjusted_npv = recompute_adjusted_npv(base, attenuation_ratio)
                 adjusted_dpp = recompute_adjusted_dpp(base, attenuation_ratio)
-
-                if adjusted_npv <= 0.0:
-                    valid = False
-                    break
 
                 score += adjusted_npv
                 bundle.append(
@@ -571,7 +590,7 @@ def optimize_stage2(
                     )
                 )
 
-            if valid and score > best_score:
+            if score > best_score:
                 best_score = score
                 best_bundle = bundle
 
@@ -592,7 +611,7 @@ def optimize_stage2(
                 "name_b": db.store.name,
                 "city": da.store.city,
                 "distance_m": round(d * 1000.0, 1),
-                "rule": "distance below 300m, cannot open together",
+                "rule": "distance below 280m, cannot open together",
             }
         )
 
@@ -626,7 +645,16 @@ def optimize_stage2(
 
 
 def rdc_lifecycle_cost_10k(rdc: RDC) -> float:
-    residual = rdc.initial_investment_10k * rdc.residual_rate
+    """
+    Present value of RDC 5-year lifecycle cost:
+        CapEx + PV(annual OpEx over horizon) - PV(residual at end-of-life)
+    Using the same horizon_years and discount_rate as stores for dimensional
+    consistency with `delivery_cost_pv_10k`.
+    """
+    cp = city_params(rdc.city)
+    discount_rate = float(cp["discount_rate"])
+    years = int(cp["horizon_years"])
+
     annual = (
         rdc.annual_rent_10k
         + rdc.annual_property_10k
@@ -634,7 +662,14 @@ def rdc_lifecycle_cost_10k(rdc: RDC) -> float:
         + rdc.annual_labor_10k
         + rdc.annual_utility_10k
     )
-    return rdc.initial_investment_10k + 5.0 * annual - residual
+    pv_annual = 0.0
+    for y in range(1, years + 1):
+        pv_annual += annual / ((1.0 + discount_rate) ** y)
+
+    residual_nominal = rdc.initial_investment_10k * rdc.residual_rate
+    pv_residual = residual_nominal / ((1.0 + discount_rate) ** years)
+
+    return rdc.initial_investment_10k + pv_annual - pv_residual
 
 
 def rdc_eligibility(rdc: RDC) -> Tuple[bool, List[str]]:
@@ -643,28 +678,28 @@ def rdc_eligibility(rdc: RDC) -> Tuple[bool, List[str]]:
 
     reasons: List[str] = []
     if not rdc.blue_access:
-        reasons.append("blue plate truck access requirement not met")
+        reasons.append("[BLUE_ACCESS] blue plate truck access requirement not met")
     if rdc.core_travel_min > 30.0:
-        reasons.append("core travel time above 30 min")
+        reasons.append(f"[TRAVEL_TIME] core travel time above 30 min ({rdc.core_travel_min:.1f})")
     if rdc.clear_height_m < 6.0:
-        reasons.append("clear height below 6 m")
+        reasons.append(f"[CLEAR_HEIGHT] clear height below 6m ({rdc.clear_height_m:.1f})")
     if not rdc.loading_dock:
-        reasons.append("missing loading dock")
+        reasons.append("[LOADING_DOCK] missing loading dock")
     if not rdc.can_three_temp:
-        reasons.append("cannot support three-temperature warehouse")
+        reasons.append("[THREE_TEMP] cannot support three-temperature warehouse")
     if not rdc.fire_pass:
-        reasons.append("fire safety requirement not met")
+        reasons.append("[FIRE_SAFETY] fire safety requirement not met")
     if rdc.disturbance_risk:
-        reasons.append("disturbance risk near residential/school/hospital")
+        reasons.append("[DISTURBANCE] disturbance risk near residential/school/hospital")
     if rdc.rent_per_sqm_day > rent_cap:
-        reasons.append(f"rent exceeds city cap ({rdc.rent_per_sqm_day:.2f}>{rent_cap:.2f})")
+        reasons.append(f"[RENT_CAP] rent exceeds city cap ({rdc.rent_per_sqm_day:.2f}>{rent_cap:.2f})")
     if rdc.lease_years < 5.0:
-        reasons.append("remaining lease below 5 years")
+        reasons.append(f"[LEASE_TERM] remaining lease below 5 years ({rdc.lease_years:.1f})")
 
-    # GIS hard warning: inner-ring placements are marked as invalid by policy.
+    # GIS hard warning: inner-ring placements are forbidden by blue-plate policy.
     rule = point_inner_ring_violation(rdc.city, rdc.lat, rdc.lon)
     if rule.get("violation"):
-        reasons.append(str(rule.get("message")))
+        reasons.append("[INNER_RING] RDC located inside inner-ring restricted zone")
 
     return (len(reasons) == 0), reasons
 
@@ -884,17 +919,22 @@ def optimize_stage3(
         total_weight = sum(a.demand_sales_10k for a in assignments) or 1.0
         avg_distance = sum(a.distance_km * a.demand_sales_10k for a in assignments) / total_weight
 
-        total_revenue_pv_10k = 0.0
+        # ROI uses PV of gross profit (revenue * gross_margin) rather than raw
+        # revenue, so it is dimensionally comparable with the PV-based total cost.
+        total_gross_profit_pv_10k = 0.0
         for store in full_network_stores:
             cp = city_params(store.city)
             growth = list(cp["growth"])
             discount_rate = float(cp["discount_rate"])
+            gross_margin = float(cp["gross_margin"])
             for year, g in enumerate(growth, start=1):
-                total_revenue_pv_10k += store.rf_sales_10k * g / ((1.0 + discount_rate) ** year)
+                total_gross_profit_pv_10k += (
+                    store.rf_sales_10k * g * gross_margin / ((1.0 + discount_rate) ** year)
+                )
 
         roi = 0.0
         if best_plan["total_cost_10k"] > 0:
-            roi = (total_revenue_pv_10k - best_plan["total_cost_10k"]) / best_plan["total_cost_10k"]
+            roi = (total_gross_profit_pv_10k - best_plan["total_cost_10k"]) / best_plan["total_cost_10k"]
 
         city_breakdown: Dict[str, Dict[str, float]] = {}
         for a in assignments:
