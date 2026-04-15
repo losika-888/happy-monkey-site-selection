@@ -23,7 +23,11 @@
       "Bash(ssh -i /Users/philyang/Desktop/Oepn_Claw/Open_Claw.pem ubuntu@43.133.46.51 'cd ~/happymonkey-site && git checkout \"stash@{0}^3\" -- start.sh && chmod +x start.sh && cat start.sh | head -5 && echo --- && ./start.sh && sleep 2 && tail -15 flask.log')",
       "Bash(ssh -i /Users/philyang/Desktop/Oepn_Claw/Open_Claw.pem -o StrictHostKeyChecking=no ubuntu@43.133.46.51 'cp ~/happymonkey-site/start.sh ~/happymonkey-site/start.sh.bak && grep OPENCLAW ~/happymonkey-site/start.sh')",
       "Bash(ssh -i /Users/philyang/Desktop/Oepn_Claw/Open_Claw.pem ubuntu@43.133.46.51 'sed -i \"s|wss://yyb-openclaw\\\\.site|ws://127.0.0.1:18789|g\" ~/happymonkey-site/start.sh && grep OPENCLAW ~/happymonkey-site/start.sh')",
-      "Bash(./deploy.sh \"perf: OpenClaw WS 改走本机 ws://127.0.0.1:18789 + chat 计时日志\")"
+      "Bash(./deploy.sh \"perf: OpenClaw WS 改走本机 ws://127.0.0.1:18789 + chat 计时日志\")",
+      "Bash(ssh -i /Users/philyang/Desktop/Oepn_Claw/Open_Claw.pem ubuntu@43.133.46.51 'curl -s -X POST http://127.0.0.1:5001/api/chat -H \"Content-Type: application/json\" -d \"{\\\\\"messages\\\\\":[{\\\\\"role\\\\\":\\\\\"user\\\\\",\\\\\"content\\\\\":\\\\\"说一句话测试连接\\\\\"}]}\" -o /tmp/chat_resp.json -w \"http=%{http_code} total=%{time_total}s\\\\n\"; echo \"---\"; head -c 400 /tmp/chat_resp.json; echo \"\"; echo \"---\"; tail -20 ~/happymonkey-site/flask.log')",
+      "Bash(ssh -i /Users/philyang/Desktop/Oepn_Claw/Open_Claw.pem ubuntu@43.133.46.51 'grep openclaw_chat_timing ~/happymonkey-site/flask.log | tail -30')",
+      "Bash(python3 -c \"import ast; ast.parse\\(open\\('openclaw_client.py'\\).read\\(\\)\\); ast.parse\\(open\\('app.py'\\).read\\(\\)\\); print\\('syntax ok'\\)\")",
+      "Bash(./deploy.sh \"feat\\(D1\\): SSE 流式端点 /api/chat/stream + openclaw_chat_stream generator\")"
     ]
   }
 }

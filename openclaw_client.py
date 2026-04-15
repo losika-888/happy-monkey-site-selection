@@ -5,8 +5,11 @@ OpenClaw WebSocket 客户端模块
 from __future__ import annotations
 
 import json
+import queue
 import threading
+import time
 import uuid
+from typing import Generator
 
 import websocket
 
@@ -186,3 +189,190 @@ def openclaw_chat(user_message: str, session_key: str | None = None, timeout: in
         raise RuntimeError(state["error"])
 
     return state["text"] or "(暂无回复)", state["session_key"] or ""
+
+
+# ---------------------------------------------------------------------------
+# 流式版本:generator 形式,边收边 yield,给 SSE 端点用
+# ---------------------------------------------------------------------------
+
+_STREAM_SENTINEL = object()
+
+
+def openclaw_chat_stream(
+    user_message: str,
+    session_key: str | None = None,
+    timeout: int = 600,
+) -> Generator[dict, None, None]:
+    """
+    向 OpenClaw 发消息,以 generator 的形式把事件逐个吐出来。
+
+    yield 的事件格式:
+      {"type": "session", "session_key": "..."}            # 拿到 session 时推一次
+      {"type": "delta",   "text": "<累积全文>"}             # 每次 OpenClaw 推 assistant 流都 yield
+      {"type": "done",    "text": "<最终全文>", "session_key": "..."}
+      {"type": "error",   "message": "..."}
+    """
+    q: "queue.Queue[object]" = queue.Queue()
+    state: dict = {
+        "step": "init",
+        "session_key": session_key,
+        "text": "",
+        "session_emitted": False,
+    }
+
+    def emit(ev: object) -> None:
+        q.put(ev)
+
+    def on_message(ws: websocket.WebSocketApp, raw: str) -> None:
+        try:
+            data = json.loads(raw)
+        except Exception:
+            return
+        msg_type = data.get("type", "")
+        event_name = data.get("event", "")
+
+        if event_name in ("heartbeat", "tick", "presence"):
+            return
+
+        step = state["step"]
+
+        # Step 0: challenge → connect
+        if step == "init" and msg_type == "event" and event_name == "connect.challenge":
+            state["step"] = "connecting"
+            ws.send(json.dumps({
+                "type": "req",
+                "id": str(uuid.uuid4()),
+                "method": "connect",
+                "params": CONNECT_PARAMS,
+            }))
+            return
+
+        # Step 1: connect res
+        if step == "connecting" and msg_type == "res":
+            if not data.get("ok"):
+                emit({"type": "error", "message": f"connect failed: {data.get('error')}"})
+                emit(_STREAM_SENTINEL)
+                ws.close()
+                return
+            if state["session_key"]:
+                state["step"] = "subscribing"
+                _send(ws, "sessions.messages.subscribe", {"key": state["session_key"]})
+                if not state["session_emitted"]:
+                    emit({"type": "session", "session_key": state["session_key"]})
+                    state["session_emitted"] = True
+            else:
+                state["step"] = "creating"
+                _send(ws, "sessions.create", {"agentId": AGENT_ID})
+            return
+
+        # Step 2: sessions.create res
+        if step == "creating" and msg_type == "res":
+            if not data.get("ok"):
+                emit({"type": "error", "message": f"sessions.create failed: {data.get('error')}"})
+                emit(_STREAM_SENTINEL)
+                ws.close()
+                return
+            payload = data.get("payload", {})
+            state["session_key"] = payload.get("key")
+            state["step"] = "subscribing"
+            _send(ws, "sessions.messages.subscribe", {"key": state["session_key"]})
+            if state["session_key"] and not state["session_emitted"]:
+                emit({"type": "session", "session_key": state["session_key"]})
+                state["session_emitted"] = True
+            return
+
+        # Step 3: subscribe res → send message
+        if step == "subscribing" and msg_type == "res":
+            state["step"] = "sending"
+            _send(ws, "sessions.send", {
+                "key": state["session_key"],
+                "message": user_message,
+            })
+            return
+
+        # Step 4: sessions.send res
+        if step == "sending" and msg_type == "res":
+            if not data.get("ok"):
+                emit({"type": "error", "message": f"sessions.send failed: {data.get('error')}"})
+                emit(_STREAM_SENTINEL)
+                ws.close()
+                return
+            state["step"] = "waiting"
+            return
+
+        # Step 5: 流式事件
+        if step == "waiting" and msg_type == "event":
+            payload = data.get("payload", {})
+
+            if event_name == "agent":
+                stream = payload.get("stream", "")
+                if stream == "assistant":
+                    text = payload.get("data", {}).get("text", "")
+                    if text and text != state["text"]:
+                        state["text"] = text
+                        emit({"type": "delta", "text": text})
+                elif stream == "lifecycle":
+                    phase = payload.get("data", {}).get("phase", "")
+                    if phase in DONE_PHASES:
+                        emit({
+                            "type": "done",
+                            "text": state["text"],
+                            "session_key": state["session_key"] or "",
+                        })
+                        emit(_STREAM_SENTINEL)
+                        ws.close()
+
+            elif event_name == "chat":
+                chat_state = payload.get("state", "")
+                if chat_state in DONE_CHAT_STATES:
+                    msg_content = payload.get("message", {}).get("content", "")
+                    if isinstance(msg_content, list):
+                        for block in msg_content:
+                            if isinstance(block, dict) and block.get("type") == "text":
+                                state["text"] = block.get("text", state["text"])
+                                break
+                    elif isinstance(msg_content, str) and msg_content:
+                        state["text"] = msg_content
+                    emit({
+                        "type": "done",
+                        "text": state["text"],
+                        "session_key": state["session_key"] or "",
+                    })
+                    emit(_STREAM_SENTINEL)
+                    ws.close()
+
+    def on_error(ws: websocket.WebSocketApp, error: Exception) -> None:
+        emit({"type": "error", "message": str(error)})
+        emit(_STREAM_SENTINEL)
+
+    def on_close(ws: websocket.WebSocketApp, code: int, msg: str) -> None:
+        emit(_STREAM_SENTINEL)
+
+    ws_app = websocket.WebSocketApp(
+        WS_URL,
+        on_message=on_message,
+        on_error=on_error,
+        on_close=on_close,
+    )
+    thread = threading.Thread(target=ws_app.run_forever, daemon=True)
+    thread.start()
+
+    deadline = time.monotonic() + timeout
+    try:
+        while True:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                yield {"type": "error", "message": "openclaw chat timeout"}
+                return
+            try:
+                item = q.get(timeout=min(remaining, 30))
+            except queue.Empty:
+                continue
+            if item is _STREAM_SENTINEL:
+                return
+            yield item  # type: ignore[misc]
+    finally:
+        try:
+            ws_app.close()
+        except Exception:
+            pass

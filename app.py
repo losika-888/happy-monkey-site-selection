@@ -15,8 +15,8 @@ DEEPSEEK_BASE = "https://api.deepseek.com/v1"
 DEEPSEEK_TOKEN = os.environ.get("DEEPSEEK_TOKEN", "")
 DEEPSEEK_MODEL = "deepseek-chat"
 
-from flask import Flask, jsonify, render_template, request, send_from_directory
-from openclaw_client import openclaw_chat
+from flask import Flask, Response, jsonify, render_template, request, send_from_directory
+from openclaw_client import openclaw_chat, openclaw_chat_stream
 
 from optimizer import (
     city_params,
@@ -443,6 +443,64 @@ def chat():
         })
     except RuntimeError as e:
         return jsonify({"error": str(e)}), 502
+
+
+@app.post("/api/chat/stream")
+def chat_stream():
+    payload = request.get_json(silent=True) or {}
+    messages = payload.get("messages") or []
+    session_key = str(payload.get("session_key") or "")
+    if not messages:
+        return jsonify({"error": "messages required"}), 400
+
+    user_message = ""
+    for m in reversed(messages):
+        if m.get("role") == "user":
+            user_message = m.get("content", "")
+            break
+    if not user_message:
+        return jsonify({"error": "no user message found"}), 400
+
+    def sse_gen():
+        t0 = time.perf_counter()
+        first_delta_ms = None
+        last_text_len = 0
+        try:
+            for ev in openclaw_chat_stream(
+                user_message=user_message,
+                session_key=session_key or None,
+                timeout=600,
+            ):
+                ev_type = ev.get("type")
+                if ev_type == "delta" and first_delta_ms is None:
+                    first_delta_ms = (time.perf_counter() - t0) * 1000
+                if ev_type in ("delta", "done"):
+                    last_text_len = len(ev.get("text", ""))
+                yield f"data: {json.dumps(ev, ensure_ascii=False)}\n\n"
+        except GeneratorExit:
+            raise
+        except Exception as e:
+            yield f"data: {json.dumps({'type': 'error', 'message': str(e)}, ensure_ascii=False)}\n\n"
+        finally:
+            total_ms = (time.perf_counter() - t0) * 1000
+            first_str = f"{first_delta_ms:.0f}ms" if first_delta_ms is not None else "n/a"
+            app.logger.warning(
+                "[openclaw_stream_timing] total=%.0fms first_delta=%s reuse_session=%s reply_len=%d",
+                total_ms,
+                first_str,
+                bool(session_key),
+                last_text_len,
+            )
+
+    return Response(
+        sse_gen(),
+        mimetype="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "X-Accel-Buffering": "no",
+            "Connection": "keep-alive",
+        },
+    )
 
 
 @app.get("/api/agent-outputs")
