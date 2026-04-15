@@ -8,7 +8,22 @@
       "Bash(python3 -c ':*)",
       "Bash(python3 -m py_compile app.py)",
       "Bash(ls /Users/philyang/Desktop/美团商赛/happy_monkey/deploy*)",
-      "Bash(./deploy.sh \"fix: harden agent-outputs download path validation\")"
+      "Bash(./deploy.sh \"fix: harden agent-outputs download path validation\")",
+      "Bash(ssh -i /Users/philyang/Desktop/Oepn_Claw/Open_Claw.pem ubuntu@43.133.46.51 'cd ~/happymonkey-site && git rm -rf --cached __pycache__ 2>/dev/null; rm -rf __pycache__; git checkout -- . 2>/dev/null; git pull origin main && ./start.sh && sleep 1 && tail -10 flask.log')",
+      "Bash(ssh -i /Users/philyang/Desktop/Oepn_Claw/Open_Claw.pem ubuntu@43.133.46.51 'cd ~/happymonkey-site && pkill -f \"python.*main.py\" 2>/dev/null; pkill -f \"flask\" 2>/dev/null; sleep 1; rm -rf __pycache__ && git checkout -- . && git pull origin main && ./start.sh && sleep 2 && tail -10 flask.log')",
+      "Bash(ssh -i /Users/philyang/Desktop/Oepn_Claw/Open_Claw.pem ubuntu@43.133.46.51 'cd ~/happymonkey-site && rm -rf __pycache__ && git checkout -- . && git pull origin main')",
+      "Bash(ssh -i /Users/philyang/Desktop/Oepn_Claw/Open_Claw.pem ubuntu@43.133.46.51 'cd ~/happymonkey-site && git stash -u && git pull origin main && ./start.sh && sleep 2 && tail -10 flask.log')",
+      "Bash(ssh -i /Users/philyang/Desktop/Oepn_Claw/Open_Claw.pem ubuntu@43.133.46.51 'cd ~/happymonkey-site && ls start* 2>&1; ls *.sh 2>&1')",
+      "Bash(ssh -i /Users/philyang/Desktop/Oepn_Claw/Open_Claw.pem ubuntu@43.133.46.51 'cd ~/happymonkey-site && git stash list && git stash show -p stash@{0} --stat 2>&1 | head -20')",
+      "Bash(ssh -i /Users/philyang/Desktop/Oepn_Claw/Open_Claw.pem ubuntu@43.133.46.51 'ls -la ~/happymonkey-site/ | head -30; echo ---; find ~ -name \"start.sh\" 2>/dev/null; echo ---; ps aux | grep -E \"python|flask\" | grep -v grep')",
+      "Bash(ssh -i /Users/philyang/Desktop/Oepn_Claw/Open_Claw.pem ubuntu@43.133.46.51 'cd ~/happymonkey-site && kill 2972949 2>/dev/null; sleep 1; nohup python3 app.py > flask.log 2>&1 & disown; sleep 2; ps aux | grep \"python3 app.py\" | grep -v grep; echo ---; tail -15 flask.log')",
+      "Bash(ssh -i /Users/philyang/Desktop/Oepn_Claw/Open_Claw.pem ubuntu@43.133.46.51 'ls ~/happymonkey-site/venv/bin/python* 2>/dev/null; find ~ -maxdepth 3 -name \"activate\" 2>/dev/null; cat ~/happymonkey-site/DEPLOYMENT.md 2>/dev/null | grep -iE \"start|venv|python|nohup\" | head -20')",
+      "Bash(ssh -i /Users/philyang/Desktop/Oepn_Claw/Open_Claw.pem ubuntu@43.133.46.51 'cd ~/happymonkey-site && git stash list && echo --- && git stash show -u stash@{0} --stat 2>&1')",
+      "Bash(ssh -i /Users/philyang/Desktop/Oepn_Claw/Open_Claw.pem ubuntu@43.133.46.51 'cd ~/happymonkey-site && git checkout stash@{0} -- start.sh && chmod +x start.sh && ls -la start.sh && ./start.sh && sleep 2 && tail -15 flask.log')",
+      "Bash(ssh -i /Users/philyang/Desktop/Oepn_Claw/Open_Claw.pem ubuntu@43.133.46.51 'cd ~/happymonkey-site && git checkout \"stash@{0}^3\" -- start.sh && chmod +x start.sh && cat start.sh | head -5 && echo --- && ./start.sh && sleep 2 && tail -15 flask.log')",
+      "Bash(ssh -i /Users/philyang/Desktop/Oepn_Claw/Open_Claw.pem -o StrictHostKeyChecking=no ubuntu@43.133.46.51 'cp ~/happymonkey-site/start.sh ~/happymonkey-site/start.sh.bak && grep OPENCLAW ~/happymonkey-site/start.sh')",
+      "Bash(ssh -i /Users/philyang/Desktop/Oepn_Claw/Open_Claw.pem ubuntu@43.133.46.51 'sed -i \"s|wss://yyb-openclaw\\\\.site|ws://127.0.0.1:18789|g\" ~/happymonkey-site/start.sh && grep OPENCLAW ~/happymonkey-site/start.sh')",
+      "Bash(./deploy.sh \"perf: OpenClaw WS 改走本机 ws://127.0.0.1:18789 + chat 计时日志\")"
     ]
   }
 }

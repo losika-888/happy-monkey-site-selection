@@ -4,6 +4,7 @@ import csv
 import io
 import json
 import os
+import time
 from pathlib import Path
 from typing import Dict, List, Sequence, Tuple
 from urllib.error import HTTPError, URLError
@@ -423,10 +424,18 @@ def chat():
         return jsonify({"error": "no user message found"}), 400
 
     try:
+        _t0 = time.perf_counter()
         reply, new_session_key = openclaw_chat(
             user_message=user_message,
             session_key=session_key or None,
             timeout=90,
+        )
+        _elapsed_ms = (time.perf_counter() - _t0) * 1000
+        app.logger.warning(
+            "[openclaw_chat_timing] elapsed=%.0fms reuse_session=%s reply_len=%d",
+            _elapsed_ms,
+            bool(session_key),
+            len(reply),
         )
         return jsonify({
             "choices": [{"message": {"role": "assistant", "content": reply}}],
