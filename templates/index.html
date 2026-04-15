@@ -286,6 +286,9 @@
           <span class="sub">Happy Monkey Copilot</span>
         </div>
         <div class="chat-header-actions">
+          <button type="button" id="chatHistoryBtn" title="对话历史">
+            <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2"><line x1="3" y1="5" x2="13" y2="5"/><line x1="3" y1="8" x2="13" y2="8"/><line x1="3" y1="11" x2="13" y2="11"/></svg>
+          </button>
           <button type="button" id="chatMinBtn" title="最小尺寸">
             <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="8" width="10" height="4" rx="1"/></svg>
           </button>
@@ -300,15 +303,26 @@
           </button>
         </div>
       </div>
-      <div id="chatModelBadge" class="chat-model-badge">正在连接 OpenClaw...</div>
-      <div id="chatMessages" class="chat-messages"></div>
-      <div class="chat-input-area">
-        <textarea id="chatInput" rows="2" placeholder="问我关于选址结果的任何问题... (Enter 发送)"></textarea>
-        <button id="chatSendBtn" class="btn btn-primary">发送</button>
-      </div>
-      <div class="agent-reports">
-        <button type="button" id="agentReportsToggle" class="btn btn-small">📄 查看分析报告</button>
-        <div id="agentReportsList" class="agent-reports-list" hidden></div>
+      <div class="chat-body">
+        <aside id="chatSidebar" class="chat-sidebar" aria-hidden="true">
+          <button type="button" id="chatNewBtn" class="chat-new-btn">
+            <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2"><line x1="8" y1="3" x2="8" y2="13"/><line x1="3" y1="8" x2="13" y2="8"/></svg>
+            <span>新建对话</span>
+          </button>
+          <div id="chatSessionList" class="chat-session-list"></div>
+        </aside>
+        <div class="chat-main">
+          <div id="chatModelBadge" class="chat-model-badge">正在连接 OpenClaw...</div>
+          <div id="chatMessages" class="chat-messages"></div>
+          <div class="chat-input-area">
+            <textarea id="chatInput" rows="2" placeholder="问我关于选址结果的任何问题... (Enter 发送)"></textarea>
+            <button id="chatSendBtn" class="btn btn-primary">发送</button>
+          </div>
+          <div class="agent-reports">
+            <button type="button" id="agentReportsToggle" class="btn btn-small">📄 查看分析报告</button>
+            <div id="agentReportsList" class="agent-reports-list" hidden></div>
+          </div>
+        </div>
       </div>
     </aside>
 

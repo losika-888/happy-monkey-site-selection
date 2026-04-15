@@ -31,7 +31,8 @@
       "Bash(ssh -i /Users/philyang/Desktop/Oepn_Claw/Open_Claw.pem ubuntu@43.133.46.51 'curl -sN -X POST http://127.0.0.1:5001/api/chat/stream -H \"Content-Type: application/json\" -d \"{\\\\\"messages\\\\\":[{\\\\\"role\\\\\":\\\\\"user\\\\\",\\\\\"content\\\\\":\\\\\"用3段话介绍一下你自己,每段大概20个字\\\\\"}]}\" | while IFS= read -r line; do echo \"[$\\(date +%M:%S.%3N\\)] $line\"; done')",
       "Bash(node --check /Users/philyang/Desktop/美团商赛/happy_monkey/static/app.js)",
       "Bash(./deploy.sh \"feat\\(D2\\): 前端 chatSend 改用 SSE 流式端点,逐字渲染 + 即时保存 session_key\")",
-      "Bash(./deploy.sh \"docs: 更新 DEPLOYMENT.md,记录 Plan A/D 优化演进 + SSE 流式架构\")"
+      "Bash(./deploy.sh \"docs: 更新 DEPLOYMENT.md,记录 Plan A/D 优化演进 + SSE 流式架构\")",
+      "Bash(./deploy.sh \"feat: 聊天侧边栏 + 历史会话 + 新建对话 \\(localStorage\\)\")"
     ]
   }
 }

@@ -919,6 +919,10 @@ const chat = {
   minBtn: document.getElementById("chatMinBtn"),
   expandBtn: document.getElementById("chatExpandBtn"),
   focusBtn: document.getElementById("chatFocusBtn"),
+  historyBtn: document.getElementById("chatHistoryBtn"),
+  newBtn: document.getElementById("chatNewBtn"),
+  sidebar: document.getElementById("chatSidebar"),
+  sessionList: document.getElementById("chatSessionList"),
   messages: document.getElementById("chatMessages"),
   input: document.getElementById("chatInput"),
   sendBtn: document.getElementById("chatSendBtn"),
@@ -926,13 +930,180 @@ const chat = {
   history: [],
   model: "",
   sessionKey: "",
+  activeId: "",
   mode: "mini",
 };
+
+// ---- Chat persistence (localStorage) ----
+const CHAT_STORE_KEY = "hm_chat_sessions_v1";
+
+const chatStore = {
+  data: { activeId: "", sessions: [] },
+
+  load() {
+    try {
+      const raw = localStorage.getItem(CHAT_STORE_KEY);
+      if (raw) {
+        const parsed = JSON.parse(raw);
+        if (parsed && Array.isArray(parsed.sessions)) {
+          this.data = { activeId: parsed.activeId || "", sessions: parsed.sessions };
+        }
+      }
+    } catch {}
+    return this.data;
+  },
+
+  save() {
+    try {
+      localStorage.setItem(CHAT_STORE_KEY, JSON.stringify(this.data));
+    } catch {}
+  },
+
+  list() {
+    return [...this.data.sessions].sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0));
+  },
+
+  get(id) {
+    return this.data.sessions.find((s) => s.id === id) || null;
+  },
+
+  create() {
+    const id = "c_" + Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
+    const now = Date.now();
+    const sess = { id, title: "新对话", sessionKey: "", messages: [], createdAt: now, updatedAt: now };
+    this.data.sessions.push(sess);
+    this.data.activeId = id;
+    this.save();
+    return sess;
+  },
+
+  update(id, patch) {
+    const s = this.get(id);
+    if (!s) return null;
+    Object.assign(s, patch, { updatedAt: Date.now() });
+    this.save();
+    return s;
+  },
+
+  setActive(id) {
+    this.data.activeId = id;
+    this.save();
+  },
+
+  remove(id) {
+    const idx = this.data.sessions.findIndex((s) => s.id === id);
+    if (idx < 0) return;
+    this.data.sessions.splice(idx, 1);
+    if (this.data.activeId === id) {
+      const next = this.list()[0];
+      this.data.activeId = next ? next.id : "";
+    }
+    this.save();
+  },
+};
+
+function fmtRelTime(ts) {
+  if (!ts) return "";
+  const diff = Date.now() - ts;
+  const min = 60 * 1000;
+  const hr = 60 * min;
+  const day = 24 * hr;
+  if (diff < min) return "刚刚";
+  if (diff < hr) return `${Math.floor(diff / min)} 分钟前`;
+  if (diff < day) return `${Math.floor(diff / hr)} 小时前`;
+  if (diff < 7 * day) return `${Math.floor(diff / day)} 天前`;
+  const d = new Date(ts);
+  return `${d.getMonth() + 1}/${d.getDate()}`;
+}
+
+function renderSessionList() {
+  const list = chatStore.list();
+  chat.sessionList.innerHTML = "";
+  if (list.length === 0) {
+    const empty = document.createElement("div");
+    empty.className = "chat-session-empty";
+    empty.textContent = "暂无历史对话\n点击上方新建";
+    chat.sessionList.appendChild(empty);
+    return;
+  }
+  for (const s of list) {
+    const item = document.createElement("div");
+    item.className = "chat-session-item" + (s.id === chat.activeId ? " active" : "");
+    item.title = s.title;
+
+    const title = document.createElement("span");
+    title.className = "title";
+    title.textContent = s.title || "新对话";
+
+    const time = document.createElement("span");
+    time.className = "time";
+    time.textContent = fmtRelTime(s.updatedAt);
+
+    const del = document.createElement("button");
+    del.className = "del-btn";
+    del.type = "button";
+    del.textContent = "×";
+    del.title = "删除此对话";
+    del.addEventListener("click", (e) => {
+      e.stopPropagation();
+      if (!confirm("删除这条对话记录？")) return;
+      chatStore.remove(s.id);
+      if (chat.activeId === s.id) {
+        const next = chatStore.list()[0];
+        if (next) loadSession(next.id);
+        else startNewSession();
+      } else {
+        renderSessionList();
+      }
+    });
+
+    item.addEventListener("click", () => loadSession(s.id));
+    item.appendChild(title);
+    item.appendChild(time);
+    item.appendChild(del);
+    chat.sessionList.appendChild(item);
+  }
+}
+
+function clearMessagesDom() {
+  chat.messages.innerHTML = "";
+}
+
+function loadSession(id) {
+  const s = chatStore.get(id);
+  if (!s) return;
+  chat.activeId = id;
+  chat.sessionKey = s.sessionKey || "";
+  chat.history = s.messages.map((m) => ({ role: m.role, content: m.content }));
+  chatStore.setActive(id);
+
+  clearMessagesDom();
+  for (const m of s.messages) {
+    if (m.role === "user" || m.role === "assistant") {
+      chatAppendMsg(m.role, m.content);
+    }
+  }
+  renderSessionList();
+}
+
+function startNewSession() {
+  const s = chatStore.create();
+  chat.activeId = s.id;
+  chat.sessionKey = "";
+  chat.history = [];
+  clearMessagesDom();
+  renderSessionList();
+}
 
 function setChatMode(mode) {
   chat.mode = mode;
   chat.panel.setAttribute("data-mode", mode);
   document.body.classList.toggle("chat-focus", mode === "focus");
+  if (mode === "expand" || mode === "focus") {
+    chat.panel.classList.add("show-history");
+  } else {
+    chat.panel.classList.remove("show-history");
+  }
   // invalidate leaflet size after transition finishes so map re-renders
   if (state.map) {
     setTimeout(() => state.map.invalidateSize(), 340);
@@ -957,6 +1128,13 @@ chat.closeBtn.addEventListener("click", closeChat);
 if (chat.minBtn) chat.minBtn.addEventListener("click", () => setChatMode("mini"));
 if (chat.expandBtn) chat.expandBtn.addEventListener("click", () => setChatMode("expand"));
 if (chat.focusBtn) chat.focusBtn.addEventListener("click", () => setChatMode("focus"));
+if (chat.historyBtn) {
+  chat.historyBtn.addEventListener("click", () => {
+    chat.panel.classList.toggle("show-history");
+    if (state.map) setTimeout(() => state.map.invalidateSize(), 340);
+  });
+}
+if (chat.newBtn) chat.newBtn.addEventListener("click", () => startNewSession());
 
 chat.input.addEventListener("keydown", (e) => {
   if (e.key === "Enter" && !e.shiftKey) {
@@ -1008,11 +1186,25 @@ async function chatSend() {
   const text = chat.input.value.trim();
   if (!text || chat.sendBtn.disabled) return;
 
+  if (!chat.activeId || !chatStore.get(chat.activeId)) {
+    startNewSession();
+  }
+
   chat.input.value = "";
   chat.sendBtn.disabled = true;
   chatAppendMsg("user", text);
   const thinking = chatAppendMsg("thinking", "思考中...");
   chat.history.push({ role: "user", content: text });
+
+  const isFirstMessage = chat.history.filter((m) => m.role === "user").length === 1;
+  const patch = {
+    messages: chat.history.slice(),
+  };
+  if (isFirstMessage) {
+    patch.title = text.length > 20 ? text.slice(0, 20) + "…" : text;
+  }
+  chatStore.update(chat.activeId, patch);
+  renderSessionList();
 
   const messages = [
     { role: "system", content: buildSystemContext() },
@@ -1032,7 +1224,10 @@ async function chatSend() {
   const handleEvent = (ev) => {
     if (!ev || !ev.type) return;
     if (ev.type === "session") {
-      if (ev.session_key) chat.sessionKey = ev.session_key;
+      if (ev.session_key) {
+        chat.sessionKey = ev.session_key;
+        if (chat.activeId) chatStore.update(chat.activeId, { sessionKey: ev.session_key });
+      }
       return;
     }
     if (ev.type === "delta") {
@@ -1105,6 +1300,13 @@ async function chatSend() {
       if (finalText) {
         chat.history.push({ role: "assistant", content: finalText });
       }
+      if (chat.activeId) {
+        chatStore.update(chat.activeId, {
+          messages: chat.history.slice(),
+          sessionKey: chat.sessionKey,
+        });
+        renderSessionList();
+      }
     }
   } catch (e) {
     if (assistantBubble) assistantBubble.remove();
@@ -1116,6 +1318,17 @@ async function chatSend() {
 }
 
 async function chatInit() {
+  chatStore.load();
+  const list = chatStore.list();
+  if (list.length > 0) {
+    const activeId = chatStore.data.activeId && chatStore.get(chatStore.data.activeId)
+      ? chatStore.data.activeId
+      : list[0].id;
+    loadSession(activeId);
+  } else {
+    renderSessionList();
+  }
+
   try {
     const res = await fetch("/api/chat/models");
     const data = await res.json();
