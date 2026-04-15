@@ -281,8 +281,8 @@ function updateStepIntro() {
 
   const defaultCopy = {
     stage1: "阶段一：查看候选门店在 NPV、DPP 和坪效阈值下的通过情况。",
-    stage2: "阶段二：在排他约束下优选门店组合，观察修正后的财务结果。",
-    stage3: "阶段三：对比不同 P 情景下的 RDC 网络结构与总成本。",
+    stage2: "阶段二：联合优化选店与网络，目标为新店修正NPV扣除RDC/配送增量成本。",
+    stage3: "阶段三：对比不同 P 情景下的联合最优方案（选店组合可能因 P 而异）。",
   };
 
   if (!state.result) {
@@ -488,8 +488,8 @@ function renderSummary() {
     ["阶段二入选", summary.stage2_selected],
     ["合规RDC", summary.eligible_rdcs],
     ["最优P", summary.best_p],
-    ["最优总成本(万元)", summary.best_total_cost_10k],
-    ["距离来源", meta.distance_source || "-"],
+    ["联合最优总成本(万元)", summary.best_total_cost_10k],
+    ["联合目标值(万元)", summary.best_joint_objective_10k],
     ["自定义RDC", meta.custom_rdcs || 0],
   ];
 
@@ -506,7 +506,8 @@ function renderSummary() {
 }
 
 function renderCostBars() {
-  const scenarios = state.result?.stage3?.scenarios || [];
+  const scenarios = [...(state.result?.stage3?.scenarios || [])]
+    .sort((a, b) => Number(a.p) - Number(b.p));
   if (!scenarios.length) {
     els.costBars.innerHTML = "<div>暂无情景成本数据</div>";
     return;
@@ -538,7 +539,8 @@ function renderCostBars() {
 }
 
 function renderScenarioCards() {
-  const scenarios = state.result?.stage3?.scenarios || [];
+  const scenarios = [...(state.result?.stage3?.scenarios || [])]
+    .sort((a, b) => Number(a.p) - Number(b.p));
   const bestP = state.result?.stage3?.best_scenario?.p;
 
   if (!scenarios.length) {

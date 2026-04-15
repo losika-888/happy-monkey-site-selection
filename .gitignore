@@ -4,3 +4,4 @@ venv/
 .env
 flask.log
 agent_outputs/
+optimizer_legacy.py
