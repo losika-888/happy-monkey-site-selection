@@ -27,7 +27,10 @@
       "Bash(ssh -i /Users/philyang/Desktop/Oepn_Claw/Open_Claw.pem ubuntu@43.133.46.51 'curl -s -X POST http://127.0.0.1:5001/api/chat -H \"Content-Type: application/json\" -d \"{\\\\\"messages\\\\\":[{\\\\\"role\\\\\":\\\\\"user\\\\\",\\\\\"content\\\\\":\\\\\"说一句话测试连接\\\\\"}]}\" -o /tmp/chat_resp.json -w \"http=%{http_code} total=%{time_total}s\\\\n\"; echo \"---\"; head -c 400 /tmp/chat_resp.json; echo \"\"; echo \"---\"; tail -20 ~/happymonkey-site/flask.log')",
       "Bash(ssh -i /Users/philyang/Desktop/Oepn_Claw/Open_Claw.pem ubuntu@43.133.46.51 'grep openclaw_chat_timing ~/happymonkey-site/flask.log | tail -30')",
       "Bash(python3 -c \"import ast; ast.parse\\(open\\('openclaw_client.py'\\).read\\(\\)\\); ast.parse\\(open\\('app.py'\\).read\\(\\)\\); print\\('syntax ok'\\)\")",
-      "Bash(./deploy.sh \"feat\\(D1\\): SSE 流式端点 /api/chat/stream + openclaw_chat_stream generator\")"
+      "Bash(./deploy.sh \"feat\\(D1\\): SSE 流式端点 /api/chat/stream + openclaw_chat_stream generator\")",
+      "Bash(ssh -i /Users/philyang/Desktop/Oepn_Claw/Open_Claw.pem ubuntu@43.133.46.51 'curl -sN -X POST http://127.0.0.1:5001/api/chat/stream -H \"Content-Type: application/json\" -d \"{\\\\\"messages\\\\\":[{\\\\\"role\\\\\":\\\\\"user\\\\\",\\\\\"content\\\\\":\\\\\"用3段话介绍一下你自己,每段大概20个字\\\\\"}]}\" | while IFS= read -r line; do echo \"[$\\(date +%M:%S.%3N\\)] $line\"; done')",
+      "Bash(node --check /Users/philyang/Desktop/美团商赛/happy_monkey/static/app.js)",
+      "Bash(./deploy.sh \"feat\\(D2\\): 前端 chatSend 改用 SSE 流式端点,逐字渲染 + 即时保存 session_key\")"
     ]
   }
 }

@@ -1019,25 +1019,95 @@ async function chatSend() {
     ...chat.history,
   ];
 
+  let assistantBubble = null;
+  let finalText = "";
+  let errored = false;
+
+  const ensureAssistantBubble = () => {
+    if (assistantBubble) return;
+    thinking.remove();
+    assistantBubble = chatAppendMsg("assistant", "");
+  };
+
+  const handleEvent = (ev) => {
+    if (!ev || !ev.type) return;
+    if (ev.type === "session") {
+      if (ev.session_key) chat.sessionKey = ev.session_key;
+      return;
+    }
+    if (ev.type === "delta") {
+      ensureAssistantBubble();
+      finalText = ev.text || "";
+      assistantBubble.textContent = finalText;
+      chat.messages.scrollTop = chat.messages.scrollHeight;
+      return;
+    }
+    if (ev.type === "done") {
+      ensureAssistantBubble();
+      if (ev.text) finalText = ev.text;
+      assistantBubble.textContent = finalText || "(无回复内容)";
+      if (ev.session_key) chat.sessionKey = ev.session_key;
+      return;
+    }
+    if (ev.type === "error") {
+      errored = true;
+      if (assistantBubble) assistantBubble.remove();
+      thinking.remove();
+      chatAppendMsg("assistant", `错误：${ev.message || "未知错误"}`);
+      return;
+    }
+  };
+
   try {
-    const res = await fetch("/api/chat", {
+    const res = await fetch("/api/chat/stream", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ model: chat.model, messages, session_key: chat.sessionKey }),
     });
-    const data = await res.json();
-    thinking.remove();
 
-    if (data.error) {
-      chatAppendMsg("assistant", `错误：${data.error}`);
-    } else {
-      const reply = data.choices?.[0]?.message?.content || "(无回复内容)";
-      chat.history.push({ role: "assistant", content: reply });
-      chatAppendMsg("assistant", reply);
-      // 保存 session_key，下次继续同一个 OpenClaw 会话（保持记忆）
-      if (data.session_key) chat.sessionKey = data.session_key;
+    if (!res.ok || !res.body) {
+      throw new Error(`HTTP ${res.status}`);
+    }
+
+    const reader = res.body.getReader();
+    const decoder = new TextDecoder("utf-8");
+    let buffer = "";
+
+    // 手工解析 SSE:每个事件以 "\n\n" 分隔,行内以 "data: " 开头
+    while (true) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+
+      let sepIdx;
+      while ((sepIdx = buffer.indexOf("\n\n")) !== -1) {
+        const rawFrame = buffer.slice(0, sepIdx);
+        buffer = buffer.slice(sepIdx + 2);
+
+        for (const line of rawFrame.split("\n")) {
+          if (!line.startsWith("data:")) continue;
+          const jsonStr = line.slice(5).trimStart();
+          if (!jsonStr) continue;
+          try {
+            handleEvent(JSON.parse(jsonStr));
+          } catch (err) {
+            console.warn("SSE parse error", err, jsonStr);
+          }
+        }
+      }
+    }
+
+    if (!errored) {
+      if (!assistantBubble) {
+        thinking.remove();
+        chatAppendMsg("assistant", "(无回复内容)");
+      }
+      if (finalText) {
+        chat.history.push({ role: "assistant", content: finalText });
+      }
     }
   } catch (e) {
+    if (assistantBubble) assistantBubble.remove();
     thinking.remove();
     chatAppendMsg("assistant", `网络错误：${e.message}`);
   }
