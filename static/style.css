@@ -1222,7 +1222,7 @@ body.chat-focus .top-nav {
 .chat-session-list::-webkit-scrollbar-thumb { background: rgba(200, 161, 90, 0.22); border-radius: 3px; }
 .chat-session-item {
   position: relative;
-  padding: 8px 26px 8px 10px;
+  padding: 8px 10px 8px 10px;
   border-radius: 7px;
   border: 1px solid transparent;
   background: rgba(255, 255, 255, 0.03);
@@ -1257,25 +1257,34 @@ body.chat-focus .top-nav {
   color: rgba(243, 236, 224, 0.42);
   letter-spacing: 0.04em;
 }
-.chat-session-item .del-btn {
+.chat-session-item .session-actions {
   position: absolute;
   top: 50%;
-  right: 6px;
+  right: 4px;
   transform: translateY(-50%);
-  width: 18px;
-  height: 18px;
   display: none;
+  gap: 2px;
+  background: linear-gradient(90deg, transparent 0%, rgba(27, 29, 36, 0.92) 30%, rgba(27, 29, 36, 0.98) 100%);
+  padding-left: 8px;
+}
+.chat-session-item.active .session-actions {
+  background: linear-gradient(90deg, transparent 0%, rgba(131, 6, 5, 0.92) 30%, rgba(131, 6, 5, 0.98) 100%);
+}
+.chat-session-item:hover .session-actions { display: flex; }
+.chat-session-item .action-btn {
+  width: 20px;
+  height: 20px;
+  display: grid;
   place-items: center;
   border: none;
   border-radius: 4px;
   background: transparent;
-  color: rgba(243, 236, 224, 0.5);
+  color: rgba(243, 236, 224, 0.65);
   cursor: pointer;
-  font-size: 0.85rem;
-  line-height: 1;
 }
-.chat-session-item:hover .del-btn { display: grid; }
-.chat-session-item .del-btn:hover { background: rgba(131, 6, 5, 0.5); color: #fff; }
+.chat-session-item .action-btn svg { width: 11px; height: 11px; }
+.chat-session-item .action-btn:hover { background: rgba(200, 161, 90, 0.22); color: var(--gold); }
+.chat-session-item .action-btn.del:hover { background: rgba(131, 6, 5, 0.6); color: #fff; }
 .chat-session-empty {
   padding: 16px 10px;
   font-size: 0.68rem;

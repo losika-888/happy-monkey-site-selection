@@ -916,9 +916,7 @@ const chat = {
   panel: document.getElementById("chatPanel"),
   fab: document.getElementById("chatFab"),
   closeBtn: document.getElementById("chatPanelClose"),
-  minBtn: document.getElementById("chatMinBtn"),
-  expandBtn: document.getElementById("chatExpandBtn"),
-  focusBtn: document.getElementById("chatFocusBtn"),
+  sizeBtn: document.getElementById("chatSizeBtn"),
   historyBtn: document.getElementById("chatHistoryBtn"),
   newBtn: document.getElementById("chatNewBtn"),
   sidebar: document.getElementById("chatSidebar"),
@@ -1039,11 +1037,29 @@ function renderSessionList() {
     time.className = "time";
     time.textContent = fmtRelTime(s.updatedAt);
 
+    const actions = document.createElement("div");
+    actions.className = "session-actions";
+
+    const rename = document.createElement("button");
+    rename.className = "action-btn";
+    rename.type = "button";
+    rename.title = "重命名";
+    rename.innerHTML = '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2"><path d="M11.5 2.5l2 2L5 13l-3 1 1-3 8.5-8.5z"/></svg>';
+    rename.addEventListener("click", (e) => {
+      e.stopPropagation();
+      const next = prompt("重命名对话", s.title || "");
+      if (next == null) return;
+      const trimmed = next.trim();
+      if (!trimmed) return;
+      chatStore.update(s.id, { title: trimmed });
+      renderSessionList();
+    });
+
     const del = document.createElement("button");
-    del.className = "del-btn";
+    del.className = "action-btn del";
     del.type = "button";
-    del.textContent = "×";
     del.title = "删除此对话";
+    del.innerHTML = '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 4l8 8M12 4l-8 8"/></svg>';
     del.addEventListener("click", (e) => {
       e.stopPropagation();
       if (!confirm("删除这条对话记录？")) return;
@@ -1057,10 +1073,13 @@ function renderSessionList() {
       }
     });
 
+    actions.appendChild(rename);
+    actions.appendChild(del);
+
     item.addEventListener("click", () => loadSession(s.id));
     item.appendChild(title);
     item.appendChild(time);
-    item.appendChild(del);
+    item.appendChild(actions);
     chat.sessionList.appendChild(item);
   }
 }
@@ -1098,8 +1117,7 @@ function startNewSession() {
 function setChatMode(mode) {
   chat.mode = mode;
   chat.panel.setAttribute("data-mode", mode);
-  document.body.classList.toggle("chat-focus", mode === "focus");
-  if (mode === "expand" || mode === "focus") {
+  if (mode === "expand") {
     chat.panel.classList.add("show-history");
   } else {
     chat.panel.classList.remove("show-history");
@@ -1108,6 +1126,10 @@ function setChatMode(mode) {
   if (state.map) {
     setTimeout(() => state.map.invalidateSize(), 340);
   }
+}
+
+function toggleChatSize() {
+  setChatMode(chat.mode === "expand" ? "mini" : "expand");
 }
 
 function openChat() {
@@ -1119,15 +1141,12 @@ function closeChat() {
   chat.panel.classList.remove("open");
   chat.panel.setAttribute("aria-hidden", "true");
   document.body.classList.remove("chat-open");
-  document.body.classList.remove("chat-focus");
   if (state.map) setTimeout(() => state.map.invalidateSize(), 340);
 }
 
 chat.fab.addEventListener("click", openChat);
 chat.closeBtn.addEventListener("click", closeChat);
-if (chat.minBtn) chat.minBtn.addEventListener("click", () => setChatMode("mini"));
-if (chat.expandBtn) chat.expandBtn.addEventListener("click", () => setChatMode("expand"));
-if (chat.focusBtn) chat.focusBtn.addEventListener("click", () => setChatMode("focus"));
+if (chat.sizeBtn) chat.sizeBtn.addEventListener("click", toggleChatSize);
 if (chat.historyBtn) {
   chat.historyBtn.addEventListener("click", () => {
     chat.panel.classList.toggle("show-history");
@@ -1201,7 +1220,7 @@ async function chatSend() {
     messages: chat.history.slice(),
   };
   if (isFirstMessage) {
-    patch.title = text.length > 20 ? text.slice(0, 20) + "…" : text;
+    patch.title = text.length > 10 ? text.slice(0, 10) + "…" : text;
   }
   chatStore.update(chat.activeId, patch);
   renderSessionList();

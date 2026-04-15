@@ -32,7 +32,8 @@
       "Bash(node --check /Users/philyang/Desktop/美团商赛/happy_monkey/static/app.js)",
       "Bash(./deploy.sh \"feat\\(D2\\): 前端 chatSend 改用 SSE 流式端点,逐字渲染 + 即时保存 session_key\")",
       "Bash(./deploy.sh \"docs: 更新 DEPLOYMENT.md,记录 Plan A/D 优化演进 + SSE 流式架构\")",
-      "Bash(./deploy.sh \"feat: 聊天侧边栏 + 历史会话 + 新建对话 \\(localStorage\\)\")"
+      "Bash(./deploy.sh \"feat: 聊天侧边栏 + 历史会话 + 新建对话 \\(localStorage\\)\")",
+      "Bash(./deploy.sh \"refactor: 精简聊天头部按钮 + 会话重命名 + 默认10字标题\")"
     ]
   }
 }
