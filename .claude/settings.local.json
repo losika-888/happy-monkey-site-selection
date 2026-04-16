@@ -47,7 +47,9 @@
       "Bash(python app.py)",
       "Bash(echo \"PID: $!\")",
       "Read(//tmp/**)",
-      "Bash(./deploy.sh \"feat\\(chat\\): 接入 marked.js + DOMPurify，渲染 AI 回复中的 Markdown\")"
+      "Bash(./deploy.sh \"feat\\(chat\\): 接入 marked.js + DOMPurify，渲染 AI 回复中的 Markdown\")",
+      "Bash(ssh -i /Users/philyang/Desktop/Oepn_Claw/Open_Claw.pem ubuntu@43.133.46.51 'cd ~/happymonkey-site && git checkout -- __pycache__/ && git pull -q origin main && ./start.sh && sleep 1 && tail -5 flask.log')",
+      "Bash(./deploy.sh \"fix: 修复收起报告列表按钮失效（CSS display:flex 覆盖 hidden 属性）\")"
     ]
   }
 }

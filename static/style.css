@@ -1495,6 +1495,7 @@ body.chat-focus .top-nav {
   flex-direction: column;
   gap: 6px;
 }
+.agent-reports-list[hidden] { display: none; }
 .agent-reports-list .report-link {
   display: flex;
   flex-direction: column;
