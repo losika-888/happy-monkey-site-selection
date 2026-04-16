@@ -231,7 +231,7 @@ def build_threshold_overrides(focus_city: str, npv_raw: str, dpp_raw: str, rev_r
         return None
 
     payload = {}
-    targets = ["beijing", "hangzhou"] if focus_city not in {"beijing", "hangzhou"} else [focus_city]
+    targets = [focus_city] if focus_city in {"beijing", "hangzhou"} else ["beijing"]
     for city in targets:
         payload[city] = {}
         if npv_val is not None:
@@ -323,7 +323,7 @@ def run_model():
             distance_rows=distance_rows,
             max_new_stores=max_new_stores,
             p_values=p_values,
-            focus_city=focus_city if focus_city in {"beijing", "hangzhou"} else None,
+            focus_city=focus_city if focus_city in {"beijing", "hangzhou"} else "beijing",
             threshold_overrides=threshold_overrides,
         )
     except Exception as exc:
@@ -384,7 +384,7 @@ def run_sample_model():
             distance_rows=distance_rows,
             max_new_stores=max_new_stores,
             p_values=p_values,
-            focus_city=focus_city if focus_city in {"beijing", "hangzhou"} else None,
+            focus_city=focus_city if focus_city in {"beijing", "hangzhou"} else "beijing",
             threshold_overrides=threshold_overrides,
         )
     except Exception as exc:

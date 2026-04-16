@@ -503,8 +503,6 @@ def recompute_adjusted_npv(base_result: Stage1Result, attenuation_ratio: float) 
     return -initial + sum(discounted)
 
 
-# 保留: Stage2 单目标对照组。run_full_model 已改用 optimize_stage2_stage3_joint,
-# 此函数不再被主流程调用,仅用于答辩/论文中与联合优化方法做横向对比。
 def optimize_stage2(
     stage1_results: Sequence[Stage1Result],
     max_new_stores: int = 8,
@@ -742,10 +740,6 @@ def delivery_cost_pv_10k(distance_km: float, sales_10k: float, city: str) -> flo
     return pv_yuan / 10000.0
 
 
-# 保留: Stage3 在给定 Stage2 选店下的网络成本最小化。run_full_model 已改用
-# optimize_stage2_stage3_joint,此函数不再被主流程调用,但其内部依赖的
-# rdc_lifecycle_cost_10k / rdc_eligibility / distance_lookup_km / delivery_cost_pv_10k
-# 仍被联合优化器复用,请勿删除上述帮助函数。
 def optimize_stage3(
     stores: Sequence[Store],
     selected_new_store_rows: Sequence[Dict[str, object]],
@@ -758,28 +752,11 @@ def optimize_stage3(
         str(r.get("store_id")): to_float(r.get("adjusted_sales_10k"), to_float(r.get("base_sales_10k"), 0.0))
         for r in selected_new_store_rows
     }
-
-    full_network_stores: List[Store] = []
-    for store in stores:
-        if store.is_existing:
-            full_network_stores.append(store)
-            continue
-        if store.store_id in selected_new_ids:
-            adjusted_sales = adjusted_sales_by_store.get(store.store_id, store.rf_sales_10k)
-            full_network_stores.append(
-                Store(
-                    store_id=store.store_id,
-                    name=store.name,
-                    city=store.city,
-                    lat=store.lat,
-                    lon=store.lon,
-                    rf_sales_10k=adjusted_sales,
-                    area_sqm=store.area_sqm,
-                    initial_investment_10k=store.initial_investment_10k,
-                    annual_fixed_cost_10k=store.annual_fixed_cost_10k,
-                    is_existing=store.is_existing,
-                )
-            )
+    # Stage-3 network only contains selected candidate stores.
+    full_network_stores: List[Store] = _build_network_stores(
+        [s for s in stores if s.store_id in selected_new_ids],
+        adjusted_sales_by_store,
+    )
 
     eligible_rdcs: List[Tuple[RDC, float]] = []
     rejected_rdcs: List[Dict[str, object]] = []
@@ -1317,9 +1294,6 @@ def _build_network_stores(
 ) -> List[Store]:
     out: List[Store] = []
     for store in stores:
-        if store.is_existing:
-            out.append(store)
-            continue
         if store.store_id not in adjusted_sales_by_store:
             continue
         out.append(
@@ -1333,7 +1307,7 @@ def _build_network_stores(
                 area_sqm=store.area_sqm,
                 initial_investment_10k=store.initial_investment_10k,
                 annual_fixed_cost_10k=store.annual_fixed_cost_10k,
-                is_existing=store.is_existing,
+                is_existing=False,
             )
         )
     return out
@@ -1453,32 +1427,24 @@ def _best_network_plan_for_p(
 
 def _build_combo_kernel_for_p(
     stores_for_eval: Sequence[Store],
-    existing_stores: Sequence[Store],
     eligible_rdcs: Sequence[Tuple[RDC, float]],
     distance_matrix: Dict[Tuple[str, str], float],
     p: int,
 ) -> Dict[str, object]:
     combo_plans: List[Dict[str, object]] = []
-    baseline_cost = math.inf
-    nonnegative_distance_only = True
-
-    existing_ids = {s.store_id for s in existing_stores}
+    nonnegative_total_cost_bound = True
 
     for combo in itertools.combinations(eligible_rdcs, p):
         open_rdcs = [x[0] for x in combo]
         rdc_cost = sum(x[1] for x in combo)
+        if rdc_cost < 0.0:
+            nonnegative_total_cost_bound = False
 
         store_best: Dict[str, Dict[str, object]] = {}
-        existing_delivery_cost = 0.0
-        existing_assignments: List[Assignment] = []
-        feasible_for_existing = True
 
         for store in stores_for_eval:
             same_city_rdcs = [r for r in open_rdcs if normalize_city(r.city) == normalize_city(store.city)]
             if not same_city_rdcs:
-                if store.store_id in existing_ids:
-                    feasible_for_existing = False
-                    break
                 continue
 
             best_rdc = None
@@ -1492,51 +1458,19 @@ def _build_combo_kernel_for_p(
                     best_rdc = rdc
 
             if best_rdc is None:
-                if store.store_id in existing_ids:
-                    feasible_for_existing = False
-                    break
                 continue
 
             if best_distance < 0.0:
-                nonnegative_distance_only = False
+                nonnegative_total_cost_bound = False
 
             store_best[store.store_id] = {
                 "rdc": best_rdc,
                 "distance_km": best_distance,
             }
-
-            if store.store_id in existing_ids:
-                dcost = delivery_cost_pv_10k(best_distance, store.rf_sales_10k, store.city)
-                existing_delivery_cost += dcost
-                existing_assignments.append(
-                    Assignment(
-                        store_id=store.store_id,
-                        store_name=store.name,
-                        store_city=store.city,
-                        demand_sales_10k=store.rf_sales_10k,
-                        rdc_id=best_rdc.rdc_id,
-                        rdc_name=best_rdc.name,
-                        rdc_city=best_rdc.city,
-                        store_lat=store.lat,
-                        store_lon=store.lon,
-                        rdc_lat=best_rdc.lat,
-                        rdc_lon=best_rdc.lon,
-                        distance_km=best_distance,
-                        delivery_cost_pv_10k=dcost,
-                    )
-                )
-
-        if not feasible_for_existing:
-            continue
-
-        total_existing_cost = rdc_cost + existing_delivery_cost
-        baseline_cost = min(baseline_cost, total_existing_cost)
         combo_plans.append(
             {
                 "p": p,
                 "rdc_cost_10k": rdc_cost,
-                "existing_delivery_cost_10k": existing_delivery_cost,
-                "existing_total_cost_10k": total_existing_cost,
                 "open_rdcs": [
                     {
                         "rdc_id": r.rdc_id,
@@ -1549,14 +1483,12 @@ def _build_combo_kernel_for_p(
                     for r, c in combo
                 ],
                 "store_best": store_best,
-                "existing_assignments": existing_assignments,
             }
         )
 
     return {
         "plans": combo_plans,
-        "baseline_cost_10k": (baseline_cost if math.isfinite(baseline_cost) else None),
-        "nonnegative_distance_only": nonnegative_distance_only,
+        "nonnegative_total_cost_bound": nonnegative_total_cost_bound,
     }
 
 
@@ -1609,7 +1541,7 @@ def _evaluate_bundle_with_combo_kernel(
         if not feasible:
             continue
 
-        delivery_total = float(plan["existing_delivery_cost_10k"]) + selected_delivery
+        delivery_total = selected_delivery
         total_cost = float(plan["rdc_cost_10k"]) + delivery_total
         if total_cost < best_total_cost:
             best_total_cost = total_cost
@@ -1620,14 +1552,13 @@ def _evaluate_bundle_with_combo_kernel(
     if best_plan is None:
         return None
 
-    all_assignments = list(best_plan["existing_assignments"]) + best_selected_assignments
     return {
         "p": int(best_plan["p"]),
         "rdc_cost_10k": float(best_plan["rdc_cost_10k"]),
         "delivery_cost_10k": float(best_delivery_total),
         "total_cost_10k": float(best_total_cost),
         "open_rdcs": best_plan["open_rdcs"],
-        "assignments": all_assignments,
+        "assignments": best_selected_assignments,
     }
 
 
@@ -1715,9 +1646,7 @@ def optimize_stage2_stage3_joint(
     """
     Joint objective:
         maximize new-store adjusted NPV
-                 - incremental network cost
-    where incremental network cost is measured versus the existing-store-only
-    baseline under the same P scenario.
+                 - total network cost
     """
     stage2_space = _enumerate_stage2_bundles(stage1_results, max_new_stores=max_new_stores)
     bundles: List[Dict[str, object]] = list(stage2_space["bundles"])
@@ -1726,10 +1655,8 @@ def optimize_stage2_stage3_joint(
     stage2_theoretical_bundle_count = int(stage2_space.get("theoretical_bundle_count") or 0)
     stage2_evaluated_bundle_count = int(stage2_space.get("evaluated_bundle_count") or 0)
 
-    passed_new_store_ids = {r.store.store_id for r in stage1_results if r.passed and not r.store.is_existing}
-    existing_only_stores = [s for s in stores if s.is_existing]
-    candidate_new_stores = [s for s in stores if (not s.is_existing and s.store_id in passed_new_store_ids)]
-    stores_for_eval = list(existing_only_stores) + list(candidate_new_stores)
+    passed_new_store_ids = {r.store.store_id for r in stage1_results if r.passed}
+    stores_for_eval = [s for s in stores if s.store_id in passed_new_store_ids]
     store_by_id = {s.store_id: s for s in stores_for_eval}
 
     eligible_rdcs, rejected_rdcs = _evaluate_rdc_pool(rdcs)
@@ -1747,20 +1674,17 @@ def optimize_stage2_stage3_joint(
 
     valid_p_values = sorted({p for p in p_values if p > 0 and p <= len(eligible_rdcs)})
     combo_kernel_by_p: Dict[int, Dict[str, object]] = {}
-    baseline_cost_by_p: Dict[int, Optional[float]] = {}
-    can_bound_incremental_nonnegative = True
+    can_bound_total_cost_nonnegative = True
     for p in valid_p_values:
         kernel = _build_combo_kernel_for_p(
             stores_for_eval=stores_for_eval,
-            existing_stores=existing_only_stores,
             eligible_rdcs=eligible_rdcs,
             distance_matrix=distance_matrix,
             p=p,
         )
         combo_kernel_by_p[p] = kernel
-        baseline_cost_by_p[p] = kernel.get("baseline_cost_10k")
-        can_bound_incremental_nonnegative = can_bound_incremental_nonnegative and bool(
-            kernel.get("nonnegative_distance_only", False)
+        can_bound_total_cost_nonnegative = can_bound_total_cost_nonnegative and bool(
+            kernel.get("nonnegative_total_cost_bound", False)
         )
 
     bundles_by_stage2_score = sorted(
@@ -1771,9 +1695,8 @@ def optimize_stage2_stage3_joint(
 
     scenarios: List[Dict[str, object]] = []
     for p in valid_p_values:
-        baseline_cost = baseline_cost_by_p.get(p)
         combo_kernel = combo_kernel_by_p.get(p) or {}
-        if baseline_cost is None or not (combo_kernel.get("plans") or []):
+        if not (combo_kernel.get("plans") or []):
             continue
 
         best_joint_objective = -math.inf
@@ -1789,11 +1712,10 @@ def optimize_stage2_stage3_joint(
             if not full_network_stores:
                 continue
 
-            # Safe pruning when distance matrix has no negative distances:
-            # incremental_network_cost >= 0, therefore joint objective upper bound
-            # for this bundle is stage2_adjusted_npv.
+            # Safe pruning when total network cost is guaranteed non-negative:
+            # joint objective upper bound for this bundle is stage2_adjusted_npv.
             stage2_score = float(bundle.get("total_adjusted_npv_10k", 0.0))
-            if can_bound_incremental_nonnegative and stage2_score <= best_joint_objective:
+            if can_bound_total_cost_nonnegative and stage2_score <= best_joint_objective:
                 pruned_by_upper_bound += 1
                 continue
 
@@ -1802,8 +1724,8 @@ def optimize_stage2_stage3_joint(
                 continue
 
             evaluated_bundle_count += 1
-            incremental_network_cost = float(plan["total_cost_10k"]) - float(baseline_cost)
-            joint_objective = float(bundle["total_adjusted_npv_10k"]) - incremental_network_cost
+            total_network_cost = float(plan["total_cost_10k"])
+            joint_objective = float(bundle["total_adjusted_npv_10k"]) - total_network_cost
 
             if joint_objective > best_joint_objective:
                 best_joint_objective = joint_objective
@@ -1822,8 +1744,7 @@ def optimize_stage2_stage3_joint(
                 "stage2_adjusted_npv_10k": round(float(best_bundle["total_adjusted_npv_10k"]), 4),
                 "stage2_base_npv_10k": round(float(best_bundle["total_base_npv_10k"]), 4),
                 "stage2_total_investment_10k": round(float(best_bundle["total_investment_10k"]), 4),
-                "baseline_cost_10k": round(float(baseline_cost), 4),
-                "incremental_network_cost_10k": round(float(best_plan["total_cost_10k"]) - float(baseline_cost), 4),
+                "network_total_cost_10k": round(float(best_plan["total_cost_10k"]), 4),
                 "objective_value_10k": round(float(best_joint_objective), 4),
                 "stage2_bundles_evaluated_for_p": evaluated_bundle_count,
                 "stage2_bundles_pruned_for_p": pruned_by_upper_bound,
@@ -1867,7 +1788,7 @@ def optimize_stage2_stage3_joint(
         "total_investment_10k": chosen_bundle.get("stage2_total_investment_10k", 0.0),
         "distance_alerts": distance_alerts,
         "joint_objective_value_10k": chosen_bundle.get("objective_value_10k"),
-        "objective_definition": "max(新增门店修正NPV - RDC/配送增量成本)",
+        "objective_definition": "max(新增门店修正NPV - RDC/配送网络总成本)",
         "search_mode": stage2_search_mode,
         "theoretical_bundle_count": stage2_theoretical_bundle_count,
         "evaluated_bundle_count": stage2_evaluated_bundle_count,
@@ -1879,10 +1800,11 @@ def optimize_stage2_stage3_joint(
         "network_stores": [asdict(s) for s in network_stores],
         "scenarios": scenarios,
         "best_scenario": best_scenario,
-        "objective_mode": "joint_stage2_stage3",
+        "objective_mode": "joint_stage2_stage3_total_network_cost",
+        "optimization_scope": "candidate_stores_only",
         "joint_search_meta": {
             "bundle_order": "stage2_adjusted_npv_desc",
-            "upper_bound_pruning_enabled": can_bound_incremental_nonnegative,
+            "upper_bound_pruning_enabled": can_bound_total_cost_nonnegative,
         },
     }
     return {"stage2": stage2_payload, "stage3": stage3_payload}
@@ -1898,201 +1820,6 @@ def filter_rows_by_city(rows: Sequence[Dict[str, object]], city: str) -> List[Di
     return out
 
 
-def _merge_per_city_results(per_city: Dict[str, Dict[str, object]]) -> Dict[str, object]:
-    """Merge independently-optimized per-city results into a single result."""
-    all_stage1_rows: List[Dict[str, object]] = []
-    all_stage2_selected: List[Dict[str, object]] = []
-    all_stage2_distance_alerts: List[Dict[str, object]] = []
-    all_eligible_rdcs: List[Dict[str, object]] = []
-    all_rejected_rdcs: List[Dict[str, object]] = []
-    all_network_stores: List[Dict[str, object]] = []
-    all_scenarios: List[Dict[str, object]] = []
-    all_gis_stage1: List[Dict[str, object]] = []
-    all_gis_stage2: List[Dict[str, object]] = []
-    all_gis_lines: List[Dict[str, object]] = []
-    all_gis_open_rdcs: List[Dict[str, object]] = []
-    all_gis_distance_alerts: List[Dict[str, object]] = []
-
-    total_adjusted_npv = 0.0
-    total_base_npv = 0.0
-    total_investment = 0.0
-    merged_best_assignments: List[Dict[str, object]] = []
-    merged_best_open_rdcs: List[Dict[str, object]] = []
-    merged_best_rdc_cost = 0.0
-    merged_best_delivery_cost = 0.0
-    merged_best_total_cost = 0.0
-    merged_best_p = 0
-    merged_best_objective = 0.0
-    merged_city_breakdown: Dict[str, object] = {}
-    merged_selected_new_stores: List[Dict[str, object]] = []
-    merged_stage2_adjusted_npv = 0.0
-    merged_stage2_base_npv = 0.0
-    merged_stage2_investment = 0.0
-    merged_baseline_cost = 0.0
-    merged_incremental_cost = 0.0
-
-    sum_total_stores = 0
-    sum_existing = 0
-    sum_new_candidates = 0
-    sum_stage1_passed = 0
-    sum_stage2_selected = 0
-    sum_eligible_rdcs = 0
-    sum_evaluated_bundles = 0
-
-    has_best = False
-
-    for city_key, result in per_city.items():
-        s1_rows = result.get("stage1", {}).get("rows", [])
-        all_stage1_rows.extend(s1_rows)
-
-        s2 = result.get("stage2", {})
-        all_stage2_selected.extend(s2.get("selected", []))
-        all_stage2_distance_alerts.extend(s2.get("distance_alerts", []))
-        total_adjusted_npv += float(s2.get("total_adjusted_npv_10k", 0.0))
-        total_base_npv += float(s2.get("total_base_npv_10k", 0.0))
-        total_investment += float(s2.get("total_investment_10k", 0.0))
-
-        s3 = result.get("stage3", {})
-        all_eligible_rdcs.extend(s3.get("eligible_rdcs", []))
-        all_rejected_rdcs.extend(s3.get("rejected_rdcs", []))
-        all_network_stores.extend(s3.get("network_stores", []))
-        all_scenarios.extend(s3.get("scenarios", []))
-
-        best = s3.get("best_scenario")
-        if best:
-            has_best = True
-            merged_best_assignments.extend(best.get("assignments", []))
-            merged_best_open_rdcs.extend(best.get("open_rdcs", []))
-            merged_best_rdc_cost += float(best.get("rdc_cost_10k", 0.0))
-            merged_best_delivery_cost += float(best.get("delivery_cost_10k", 0.0))
-            merged_best_total_cost += float(best.get("total_cost_10k", 0.0))
-            merged_best_p += int(best.get("p", 0))
-            merged_best_objective += float(best.get("objective_value_10k", 0.0))
-            cb = best.get("city_breakdown", {})
-            merged_city_breakdown.update(cb)
-            merged_selected_new_stores.extend(best.get("selected_new_stores", []))
-            merged_stage2_adjusted_npv += float(best.get("stage2_adjusted_npv_10k", 0.0))
-            merged_stage2_base_npv += float(best.get("stage2_base_npv_10k", 0.0))
-            merged_stage2_investment += float(best.get("stage2_total_investment_10k", 0.0))
-            merged_baseline_cost += float(best.get("baseline_cost_10k", 0.0))
-            merged_incremental_cost += float(best.get("incremental_network_cost_10k", 0.0))
-
-        gis = result.get("gis", {})
-        all_gis_stage1.extend(gis.get("stage1_points", []))
-        all_gis_stage2.extend(gis.get("stage2_selected", []))
-        all_gis_lines.extend(gis.get("stage3_network_lines", []))
-        all_gis_open_rdcs.extend(gis.get("stage3_open_rdcs", []))
-        all_gis_distance_alerts.extend(gis.get("distance_alerts", []))
-
-        sm = result.get("summary", {})
-        sum_total_stores += int(sm.get("total_store_rows", 0))
-        sum_existing += int(sm.get("existing_stores", 0))
-        sum_new_candidates += int(sm.get("new_store_candidates", 0))
-        sum_stage1_passed += int(sm.get("stage1_passed", 0))
-        sum_stage2_selected += int(sm.get("stage2_selected", 0))
-        sum_eligible_rdcs += int(sm.get("eligible_rdcs", 0))
-        sum_evaluated_bundles += int(sm.get("stage2_evaluated_bundle_count") or 0)
-
-    # Build merged best scenario
-    merged_best_scenario: Optional[Dict[str, object]] = None
-    if has_best:
-        total_weight = sum(float(a.get("demand_sales_10k", 0.0)) for a in merged_best_assignments) or 1.0
-        avg_distance = sum(
-            float(a.get("distance_km", 0.0)) * float(a.get("demand_sales_10k", 0.0))
-            for a in merged_best_assignments
-        ) / total_weight
-        roi = 0.0
-        if merged_best_total_cost > 0:
-            total_gp = 0.0
-            for ns in all_network_stores:
-                cp = city_params(str(ns.get("city", "")))
-                growth = list(cp["growth"])
-                dr = float(cp["discount_rate"])
-                gm = float(cp["gross_margin"])
-                sales = float(ns.get("rf_sales_10k", 0.0))
-                for year, g in enumerate(growth, start=1):
-                    total_gp += sales * g * gm / ((1.0 + dr) ** year)
-            roi = (total_gp - merged_best_total_cost) / merged_best_total_cost
-
-        merged_best_scenario = {
-            "p": merged_best_p,
-            "rdc_cost_10k": round(merged_best_rdc_cost, 4),
-            "delivery_cost_10k": round(merged_best_delivery_cost, 4),
-            "total_cost_10k": round(merged_best_total_cost, 4),
-            "avg_distance_km": round(avg_distance, 4),
-            "roi": round(roi, 4),
-            "open_rdcs": merged_best_open_rdcs,
-            "cost_components": {
-                "rdc_cost_10k": round(merged_best_rdc_cost, 4),
-                "delivery_cost_10k": round(merged_best_delivery_cost, 4),
-            },
-            "city_breakdown": merged_city_breakdown,
-            "assignments": sorted(merged_best_assignments, key=lambda x: float(x.get("delivery_cost_pv_10k", 0.0)), reverse=True),
-            "selected_new_stores": merged_selected_new_stores,
-            "selected_store_count": len(merged_selected_new_stores),
-            "stage2_adjusted_npv_10k": round(merged_stage2_adjusted_npv, 4),
-            "stage2_base_npv_10k": round(merged_stage2_base_npv, 4),
-            "stage2_total_investment_10k": round(merged_stage2_investment, 4),
-            "baseline_cost_10k": round(merged_baseline_cost, 4),
-            "incremental_network_cost_10k": round(merged_incremental_cost, 4),
-            "objective_value_10k": round(merged_best_objective, 4),
-        }
-
-    stage2_merged = {
-        "selected": all_stage2_selected,
-        "total_adjusted_npv_10k": round(total_adjusted_npv, 4),
-        "total_base_npv_10k": round(total_base_npv, 4),
-        "total_investment_10k": round(total_investment, 4),
-        "distance_alerts": all_stage2_distance_alerts,
-        "joint_objective_value_10k": round(merged_best_objective, 4) if has_best else None,
-        "objective_definition": "max(新增门店修正NPV - RDC/配送增量成本)",
-        "search_mode": "per_city",
-        "theoretical_bundle_count": None,
-        "evaluated_bundle_count": sum_evaluated_bundles,
-    }
-
-    stage3_merged = {
-        "eligible_rdcs": all_eligible_rdcs,
-        "rejected_rdcs": all_rejected_rdcs,
-        "network_stores": all_network_stores,
-        "scenarios": all_scenarios,
-        "best_scenario": merged_best_scenario,
-        "objective_mode": "per_city_joint",
-    }
-
-    summary = {
-        "total_store_rows": sum_total_stores,
-        "existing_stores": sum_existing,
-        "new_store_candidates": sum_new_candidates,
-        "stage1_passed": sum_stage1_passed,
-        "stage2_selected": sum_stage2_selected,
-        "stage2_search_mode": "per_city",
-        "stage2_evaluated_bundle_count": sum_evaluated_bundles,
-        "eligible_rdcs": sum_eligible_rdcs,
-        "best_p": merged_best_p if has_best else None,
-        "best_total_cost_10k": round(merged_best_total_cost, 4) if has_best else None,
-        "best_joint_objective_10k": round(merged_best_objective, 4) if has_best else None,
-        "joint_stage2_bundles_evaluated_for_best_p": None,
-        "joint_stage2_bundles_pruned_for_best_p": None,
-        "focus_city": "all",
-    }
-
-    return {
-        "summary": summary,
-        "city_configs": get_city_configs(),
-        "stage1": {"rows": all_stage1_rows},
-        "stage2": stage2_merged,
-        "stage3": stage3_merged,
-        "gis": {
-            "stage1_points": all_gis_stage1,
-            "stage2_selected": all_gis_stage2,
-            "stage3_network_lines": all_gis_lines,
-            "stage3_open_rdcs": all_gis_open_rdcs,
-            "distance_alerts": all_gis_distance_alerts,
-        },
-    }
-
-
 def run_full_model(
     store_rows: Sequence[Dict[str, object]],
     rdc_rows: Sequence[Dict[str, object]],
@@ -2102,33 +1829,11 @@ def run_full_model(
     focus_city: Optional[str] = None,
     threshold_overrides: Optional[Dict[str, Dict[str, float]]] = None,
 ) -> Dict[str, object]:
-    focus_city_norm = normalize_city(focus_city or "")
-
-    # Multi-city mode: run each city independently so that p_values apply
-    # per-city rather than being shared across all cities.
+    focus_city_norm = normalize_city(focus_city or "beijing")
     if focus_city_norm not in CITY_GIS_META:
-        cities_present = set()
-        for row in store_rows:
-            c = normalize_city(str(row.get("city") or ""))
-            if c in CITY_GIS_META:
-                cities_present.add(c)
-        if len(cities_present) >= 2:
-            per_city: Dict[str, Dict[str, object]] = {}
-            for city_key in sorted(cities_present):
-                per_city[city_key] = run_full_model(
-                    store_rows=store_rows,
-                    rdc_rows=rdc_rows,
-                    distance_rows=distance_rows,
-                    max_new_stores=max_new_stores,
-                    p_values=p_values,
-                    focus_city=city_key,
-                    threshold_overrides=threshold_overrides,
-                )
-            return _merge_per_city_results(per_city)
-
-    if focus_city_norm in CITY_GIS_META:
-        store_rows = filter_rows_by_city(store_rows, focus_city_norm)
-        rdc_rows = filter_rows_by_city(rdc_rows, focus_city_norm)
+        focus_city_norm = "beijing"
+    store_rows = filter_rows_by_city(store_rows, focus_city_norm)
+    rdc_rows = filter_rows_by_city(rdc_rows, focus_city_norm)
 
     stores = parse_stores(store_rows)
     rdcs = parse_rdcs(rdc_rows)
@@ -2226,6 +1931,7 @@ def run_full_model(
         "total_store_rows": len(stores),
         "existing_stores": sum(1 for s in stores if s.is_existing),
         "new_store_candidates": sum(1 for s in stores if not s.is_existing),
+        "optimization_scope": "candidate_stores_only",
         "stage1_passed": sum(1 for r in stage1 if r.passed),
         "stage2_selected": len(stage2.get("selected", [])),
         "stage2_search_mode": stage2.get("search_mode"),
@@ -2236,7 +1942,7 @@ def run_full_model(
         "best_joint_objective_10k": best_scenario.get("objective_value_10k"),
         "joint_stage2_bundles_evaluated_for_best_p": best_scenario.get("stage2_bundles_evaluated_for_p"),
         "joint_stage2_bundles_pruned_for_best_p": best_scenario.get("stage2_bundles_pruned_for_p"),
-        "focus_city": focus_city_norm if focus_city_norm in CITY_GIS_META else "all",
+        "focus_city": focus_city_norm,
     }
 
     return {

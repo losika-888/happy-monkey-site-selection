@@ -208,9 +208,6 @@ function clearLayer(layer) {
 
 function getCurrentCityConfigs() {
   const focus = els.focusCity.value;
-  if (focus === "all") {
-    return Object.values(state.cityConfigs || {});
-  }
   return state.cityConfigs[focus] ? [state.cityConfigs[focus]] : [];
 }
 
@@ -218,12 +215,7 @@ function updateCityParamPanel() {
   const focus = els.focusCity.value;
   const city = state.cityConfigs[focus];
 
-  if (!city) {
-    els.cityWacc.textContent = "多城市/自动";
-    els.cityNpvDefault.textContent = "北京25, 杭州28";
-    els.cityDppDefault.textContent = "2.5";
-    return;
-  }
+  if (!city) return;
 
   const p = city.params || {};
   els.cityWacc.textContent = `${fmt((p.wacc || 0) * 100, 1)}%`;
@@ -272,7 +264,6 @@ function drawBaseCityOverlays() {
 
 function cityMatch(value) {
   const focus = els.focusCity.value;
-  if (focus === "all") return true;
   return String(value || "") === focus;
 }
 
@@ -281,7 +272,7 @@ function updateStepIntro() {
 
   const defaultCopy = {
     stage1: "阶段一：查看候选门店在 NPV、DPP 和坪效阈值下的通过情况。",
-    stage2: "阶段二：联合优化选店与网络，目标为新店修正NPV扣除RDC/配送增量成本。",
+    stage2: "阶段二：联合优化选店与网络，目标为新店修正NPV扣除RDC/配送网络总成本。",
     stage3: "阶段三：对比不同 P 情景下的联合最优方案（选店组合可能因 P 而异）。",
   };
 
@@ -761,10 +752,6 @@ async function onMapClickAddCustomRdc(evt) {
   if (!state.customRdcMode) return;
 
   const focus = els.focusCity.value;
-  if (focus === "all") {
-    setStatus("请先切换到北京或杭州，再添加自定义RDC。");
-    return;
-  }
 
   const lat = evt.latlng.lat;
   const lon = evt.latlng.lng;
