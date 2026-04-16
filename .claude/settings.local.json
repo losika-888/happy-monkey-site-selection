@@ -33,7 +33,21 @@
       "Bash(./deploy.sh \"feat\\(D2\\): 前端 chatSend 改用 SSE 流式端点,逐字渲染 + 即时保存 session_key\")",
       "Bash(./deploy.sh \"docs: 更新 DEPLOYMENT.md,记录 Plan A/D 优化演进 + SSE 流式架构\")",
       "Bash(./deploy.sh \"feat: 聊天侧边栏 + 历史会话 + 新建对话 \\(localStorage\\)\")",
-      "Bash(./deploy.sh \"refactor: 精简聊天头部按钮 + 会话重命名 + 默认10字标题\")"
+      "Bash(./deploy.sh \"refactor: 精简聊天头部按钮 + 会话重命名 + 默认10字标题\")",
+      "Bash(cp /Users/philyang/Desktop/美团商赛/happy_monkey/optimizer.py /Users/philyang/Desktop/美团商赛/happy_monkey/optimizer_legacy.py)",
+      "Bash(cp \"/Users/philyang/Desktop/美团商赛/liuzk修改4:15/optimizer-4.15.py\" /Users/philyang/Desktop/美团商赛/happy_monkey/optimizer.py)",
+      "Bash(python3 -m py_compile optimizer.py app.py)",
+      "Bash(node -e \"const fs=require\\('fs'\\);new Function\\(fs.readFileSync\\('static/app.js','utf8'\\)\\);console.log\\('JS_PARSE_OK'\\);\")",
+      "Bash(git restore *)",
+      "Bash(git checkout *)",
+      "Bash(git add *)",
+      "Bash(git commit -m ' *)",
+      "Bash(GIT_SSH_COMMAND=\"ssh -i /Users/philyang/Desktop/Oepn_Claw/Open_Claw.pem\" git push origin main)",
+      "Bash(ssh -i /Users/philyang/Desktop/Oepn_Claw/Open_Claw.pem ubuntu@43.133.46.51 'cd ~/happymonkey-site && git pull -q origin main && ./start.sh && sleep 1 && tail -5 flask.log')",
+      "Bash(python app.py)",
+      "Bash(echo \"PID: $!\")",
+      "Read(//tmp/**)",
+      "Bash(./deploy.sh \"feat\\(chat\\): 接入 marked.js + DOMPurify，渲染 AI 回复中的 Markdown\")"
     ]
   }
 }

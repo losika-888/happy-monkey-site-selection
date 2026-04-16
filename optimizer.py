@@ -1898,6 +1898,201 @@ def filter_rows_by_city(rows: Sequence[Dict[str, object]], city: str) -> List[Di
     return out
 
 
+def _merge_per_city_results(per_city: Dict[str, Dict[str, object]]) -> Dict[str, object]:
+    """Merge independently-optimized per-city results into a single result."""
+    all_stage1_rows: List[Dict[str, object]] = []
+    all_stage2_selected: List[Dict[str, object]] = []
+    all_stage2_distance_alerts: List[Dict[str, object]] = []
+    all_eligible_rdcs: List[Dict[str, object]] = []
+    all_rejected_rdcs: List[Dict[str, object]] = []
+    all_network_stores: List[Dict[str, object]] = []
+    all_scenarios: List[Dict[str, object]] = []
+    all_gis_stage1: List[Dict[str, object]] = []
+    all_gis_stage2: List[Dict[str, object]] = []
+    all_gis_lines: List[Dict[str, object]] = []
+    all_gis_open_rdcs: List[Dict[str, object]] = []
+    all_gis_distance_alerts: List[Dict[str, object]] = []
+
+    total_adjusted_npv = 0.0
+    total_base_npv = 0.0
+    total_investment = 0.0
+    merged_best_assignments: List[Dict[str, object]] = []
+    merged_best_open_rdcs: List[Dict[str, object]] = []
+    merged_best_rdc_cost = 0.0
+    merged_best_delivery_cost = 0.0
+    merged_best_total_cost = 0.0
+    merged_best_p = 0
+    merged_best_objective = 0.0
+    merged_city_breakdown: Dict[str, object] = {}
+    merged_selected_new_stores: List[Dict[str, object]] = []
+    merged_stage2_adjusted_npv = 0.0
+    merged_stage2_base_npv = 0.0
+    merged_stage2_investment = 0.0
+    merged_baseline_cost = 0.0
+    merged_incremental_cost = 0.0
+
+    sum_total_stores = 0
+    sum_existing = 0
+    sum_new_candidates = 0
+    sum_stage1_passed = 0
+    sum_stage2_selected = 0
+    sum_eligible_rdcs = 0
+    sum_evaluated_bundles = 0
+
+    has_best = False
+
+    for city_key, result in per_city.items():
+        s1_rows = result.get("stage1", {}).get("rows", [])
+        all_stage1_rows.extend(s1_rows)
+
+        s2 = result.get("stage2", {})
+        all_stage2_selected.extend(s2.get("selected", []))
+        all_stage2_distance_alerts.extend(s2.get("distance_alerts", []))
+        total_adjusted_npv += float(s2.get("total_adjusted_npv_10k", 0.0))
+        total_base_npv += float(s2.get("total_base_npv_10k", 0.0))
+        total_investment += float(s2.get("total_investment_10k", 0.0))
+
+        s3 = result.get("stage3", {})
+        all_eligible_rdcs.extend(s3.get("eligible_rdcs", []))
+        all_rejected_rdcs.extend(s3.get("rejected_rdcs", []))
+        all_network_stores.extend(s3.get("network_stores", []))
+        all_scenarios.extend(s3.get("scenarios", []))
+
+        best = s3.get("best_scenario")
+        if best:
+            has_best = True
+            merged_best_assignments.extend(best.get("assignments", []))
+            merged_best_open_rdcs.extend(best.get("open_rdcs", []))
+            merged_best_rdc_cost += float(best.get("rdc_cost_10k", 0.0))
+            merged_best_delivery_cost += float(best.get("delivery_cost_10k", 0.0))
+            merged_best_total_cost += float(best.get("total_cost_10k", 0.0))
+            merged_best_p += int(best.get("p", 0))
+            merged_best_objective += float(best.get("objective_value_10k", 0.0))
+            cb = best.get("city_breakdown", {})
+            merged_city_breakdown.update(cb)
+            merged_selected_new_stores.extend(best.get("selected_new_stores", []))
+            merged_stage2_adjusted_npv += float(best.get("stage2_adjusted_npv_10k", 0.0))
+            merged_stage2_base_npv += float(best.get("stage2_base_npv_10k", 0.0))
+            merged_stage2_investment += float(best.get("stage2_total_investment_10k", 0.0))
+            merged_baseline_cost += float(best.get("baseline_cost_10k", 0.0))
+            merged_incremental_cost += float(best.get("incremental_network_cost_10k", 0.0))
+
+        gis = result.get("gis", {})
+        all_gis_stage1.extend(gis.get("stage1_points", []))
+        all_gis_stage2.extend(gis.get("stage2_selected", []))
+        all_gis_lines.extend(gis.get("stage3_network_lines", []))
+        all_gis_open_rdcs.extend(gis.get("stage3_open_rdcs", []))
+        all_gis_distance_alerts.extend(gis.get("distance_alerts", []))
+
+        sm = result.get("summary", {})
+        sum_total_stores += int(sm.get("total_store_rows", 0))
+        sum_existing += int(sm.get("existing_stores", 0))
+        sum_new_candidates += int(sm.get("new_store_candidates", 0))
+        sum_stage1_passed += int(sm.get("stage1_passed", 0))
+        sum_stage2_selected += int(sm.get("stage2_selected", 0))
+        sum_eligible_rdcs += int(sm.get("eligible_rdcs", 0))
+        sum_evaluated_bundles += int(sm.get("stage2_evaluated_bundle_count") or 0)
+
+    # Build merged best scenario
+    merged_best_scenario: Optional[Dict[str, object]] = None
+    if has_best:
+        total_weight = sum(float(a.get("demand_sales_10k", 0.0)) for a in merged_best_assignments) or 1.0
+        avg_distance = sum(
+            float(a.get("distance_km", 0.0)) * float(a.get("demand_sales_10k", 0.0))
+            for a in merged_best_assignments
+        ) / total_weight
+        roi = 0.0
+        if merged_best_total_cost > 0:
+            total_gp = 0.0
+            for ns in all_network_stores:
+                cp = city_params(str(ns.get("city", "")))
+                growth = list(cp["growth"])
+                dr = float(cp["discount_rate"])
+                gm = float(cp["gross_margin"])
+                sales = float(ns.get("rf_sales_10k", 0.0))
+                for year, g in enumerate(growth, start=1):
+                    total_gp += sales * g * gm / ((1.0 + dr) ** year)
+            roi = (total_gp - merged_best_total_cost) / merged_best_total_cost
+
+        merged_best_scenario = {
+            "p": merged_best_p,
+            "rdc_cost_10k": round(merged_best_rdc_cost, 4),
+            "delivery_cost_10k": round(merged_best_delivery_cost, 4),
+            "total_cost_10k": round(merged_best_total_cost, 4),
+            "avg_distance_km": round(avg_distance, 4),
+            "roi": round(roi, 4),
+            "open_rdcs": merged_best_open_rdcs,
+            "cost_components": {
+                "rdc_cost_10k": round(merged_best_rdc_cost, 4),
+                "delivery_cost_10k": round(merged_best_delivery_cost, 4),
+            },
+            "city_breakdown": merged_city_breakdown,
+            "assignments": sorted(merged_best_assignments, key=lambda x: float(x.get("delivery_cost_pv_10k", 0.0)), reverse=True),
+            "selected_new_stores": merged_selected_new_stores,
+            "selected_store_count": len(merged_selected_new_stores),
+            "stage2_adjusted_npv_10k": round(merged_stage2_adjusted_npv, 4),
+            "stage2_base_npv_10k": round(merged_stage2_base_npv, 4),
+            "stage2_total_investment_10k": round(merged_stage2_investment, 4),
+            "baseline_cost_10k": round(merged_baseline_cost, 4),
+            "incremental_network_cost_10k": round(merged_incremental_cost, 4),
+            "objective_value_10k": round(merged_best_objective, 4),
+        }
+
+    stage2_merged = {
+        "selected": all_stage2_selected,
+        "total_adjusted_npv_10k": round(total_adjusted_npv, 4),
+        "total_base_npv_10k": round(total_base_npv, 4),
+        "total_investment_10k": round(total_investment, 4),
+        "distance_alerts": all_stage2_distance_alerts,
+        "joint_objective_value_10k": round(merged_best_objective, 4) if has_best else None,
+        "objective_definition": "max(新增门店修正NPV - RDC/配送增量成本)",
+        "search_mode": "per_city",
+        "theoretical_bundle_count": None,
+        "evaluated_bundle_count": sum_evaluated_bundles,
+    }
+
+    stage3_merged = {
+        "eligible_rdcs": all_eligible_rdcs,
+        "rejected_rdcs": all_rejected_rdcs,
+        "network_stores": all_network_stores,
+        "scenarios": all_scenarios,
+        "best_scenario": merged_best_scenario,
+        "objective_mode": "per_city_joint",
+    }
+
+    summary = {
+        "total_store_rows": sum_total_stores,
+        "existing_stores": sum_existing,
+        "new_store_candidates": sum_new_candidates,
+        "stage1_passed": sum_stage1_passed,
+        "stage2_selected": sum_stage2_selected,
+        "stage2_search_mode": "per_city",
+        "stage2_evaluated_bundle_count": sum_evaluated_bundles,
+        "eligible_rdcs": sum_eligible_rdcs,
+        "best_p": merged_best_p if has_best else None,
+        "best_total_cost_10k": round(merged_best_total_cost, 4) if has_best else None,
+        "best_joint_objective_10k": round(merged_best_objective, 4) if has_best else None,
+        "joint_stage2_bundles_evaluated_for_best_p": None,
+        "joint_stage2_bundles_pruned_for_best_p": None,
+        "focus_city": "all",
+    }
+
+    return {
+        "summary": summary,
+        "city_configs": get_city_configs(),
+        "stage1": {"rows": all_stage1_rows},
+        "stage2": stage2_merged,
+        "stage3": stage3_merged,
+        "gis": {
+            "stage1_points": all_gis_stage1,
+            "stage2_selected": all_gis_stage2,
+            "stage3_network_lines": all_gis_lines,
+            "stage3_open_rdcs": all_gis_open_rdcs,
+            "distance_alerts": all_gis_distance_alerts,
+        },
+    }
+
+
 def run_full_model(
     store_rows: Sequence[Dict[str, object]],
     rdc_rows: Sequence[Dict[str, object]],
@@ -1908,6 +2103,29 @@ def run_full_model(
     threshold_overrides: Optional[Dict[str, Dict[str, float]]] = None,
 ) -> Dict[str, object]:
     focus_city_norm = normalize_city(focus_city or "")
+
+    # Multi-city mode: run each city independently so that p_values apply
+    # per-city rather than being shared across all cities.
+    if focus_city_norm not in CITY_GIS_META:
+        cities_present = set()
+        for row in store_rows:
+            c = normalize_city(str(row.get("city") or ""))
+            if c in CITY_GIS_META:
+                cities_present.add(c)
+        if len(cities_present) >= 2:
+            per_city: Dict[str, Dict[str, object]] = {}
+            for city_key in sorted(cities_present):
+                per_city[city_key] = run_full_model(
+                    store_rows=store_rows,
+                    rdc_rows=rdc_rows,
+                    distance_rows=distance_rows,
+                    max_new_stores=max_new_stores,
+                    p_values=p_values,
+                    focus_city=city_key,
+                    threshold_overrides=threshold_overrides,
+                )
+            return _merge_per_city_results(per_city)
+
     if focus_city_norm in CITY_GIS_META:
         store_rows = filter_rows_by_city(store_rows, focus_city_norm)
         rdc_rows = filter_rows_by_city(rdc_rows, focus_city_norm)

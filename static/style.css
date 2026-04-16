@@ -1348,6 +1348,91 @@ body.chat-focus .top-nav {
   border: 1px solid rgba(200, 161, 90, 0.22);
   border-left: 2px solid var(--gold);
   color: #f1e8d6;
+  white-space: normal;
+}
+
+/* Markdown rendering inside assistant messages */
+.msg.assistant p { margin: 0 0 0.5em; }
+.msg.assistant p:last-child { margin-bottom: 0; }
+.msg.assistant h1, .msg.assistant h2, .msg.assistant h3,
+.msg.assistant h4, .msg.assistant h5, .msg.assistant h6 {
+  margin: 0.8em 0 0.3em;
+  font-family: var(--font-display);
+  color: #fff;
+  line-height: 1.3;
+}
+.msg.assistant h1:first-child, .msg.assistant h2:first-child,
+.msg.assistant h3:first-child { margin-top: 0; }
+.msg.assistant h1 { font-size: 1.15em; }
+.msg.assistant h2 { font-size: 1.05em; }
+.msg.assistant h3 { font-size: 0.95em; }
+.msg.assistant strong { color: #fff; font-weight: 700; }
+.msg.assistant em { color: var(--gold-soft); }
+.msg.assistant ul, .msg.assistant ol {
+  margin: 0.4em 0;
+  padding-left: 1.4em;
+}
+.msg.assistant li { margin-bottom: 0.25em; }
+.msg.assistant li::marker { color: var(--gold); }
+.msg.assistant code {
+  background: rgba(255, 255, 255, 0.1);
+  padding: 0.15em 0.4em;
+  border-radius: 4px;
+  font-size: 0.88em;
+  font-family: "SF Mono", "Menlo", "Monaco", "Consolas", monospace;
+  color: var(--gold-soft);
+}
+.msg.assistant pre {
+  margin: 0.5em 0;
+  padding: 10px 12px;
+  border-radius: 8px;
+  background: rgba(0, 0, 0, 0.35);
+  border: 1px solid rgba(200, 161, 90, 0.15);
+  overflow-x: auto;
+}
+.msg.assistant pre code {
+  background: none;
+  padding: 0;
+  border-radius: 0;
+  font-size: 0.82em;
+  color: #e0d8c8;
+}
+.msg.assistant blockquote {
+  margin: 0.5em 0;
+  padding: 0.4em 0 0.4em 12px;
+  border-left: 3px solid var(--gold);
+  color: rgba(241, 232, 214, 0.82);
+  background: rgba(200, 161, 90, 0.06);
+  border-radius: 0 6px 6px 0;
+}
+.msg.assistant table {
+  width: 100%;
+  min-width: auto;
+  border-collapse: collapse;
+  margin: 0.5em 0;
+  font-size: 0.85em;
+}
+.msg.assistant th, .msg.assistant td {
+  padding: 5px 8px;
+  border: 1px solid rgba(200, 161, 90, 0.2);
+  text-align: left;
+}
+.msg.assistant th {
+  background: rgba(200, 161, 90, 0.12);
+  color: var(--gold-soft);
+  font-weight: 700;
+  font-size: 0.85em;
+}
+.msg.assistant a {
+  color: var(--gold);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+.msg.assistant a:hover { color: #fff; }
+.msg.assistant hr {
+  border: none;
+  border-top: 1px solid rgba(200, 161, 90, 0.2);
+  margin: 0.6em 0;
 }
 .msg.thinking {
   align-self: flex-start;

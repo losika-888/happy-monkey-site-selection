@@ -1165,10 +1165,25 @@ chat.input.addEventListener("keydown", (e) => {
 });
 chat.sendBtn.addEventListener("click", chatSend);
 
+function renderMarkdown(text) {
+  if (typeof marked !== "undefined" && typeof DOMPurify !== "undefined") {
+    const html = marked.parse(text || "");
+    return DOMPurify.sanitize(html);
+  }
+  // fallback: escape HTML and keep plain text
+  const d = document.createElement("div");
+  d.textContent = text;
+  return d.innerHTML;
+}
+
 function chatAppendMsg(role, text) {
   const div = document.createElement("div");
   div.className = `msg ${role}`;
-  div.textContent = text;
+  if (role === "assistant") {
+    div.innerHTML = renderMarkdown(text);
+  } else {
+    div.textContent = text;
+  }
   chat.messages.appendChild(div);
   chat.messages.scrollTop = chat.messages.scrollHeight;
   return div;
@@ -1254,14 +1269,14 @@ async function chatSend() {
     if (ev.type === "delta") {
       ensureAssistantBubble();
       finalText = ev.text || "";
-      assistantBubble.textContent = finalText;
+      assistantBubble.innerHTML = renderMarkdown(finalText);
       chat.messages.scrollTop = chat.messages.scrollHeight;
       return;
     }
     if (ev.type === "done") {
       ensureAssistantBubble();
       if (ev.text) finalText = ev.text;
-      assistantBubble.textContent = finalText || "(无回复内容)";
+      assistantBubble.innerHTML = renderMarkdown(finalText || "(无回复内容)");
       if (ev.session_key) chat.sessionKey = ev.session_key;
       return;
     }
@@ -1316,7 +1331,8 @@ async function chatSend() {
     if (!errored) {
       if (!assistantBubble) {
         thinking.remove();
-        chatAppendMsg("assistant", "(无回复内容)");
+        const fallback = chatAppendMsg("assistant", "");
+        fallback.innerHTML = renderMarkdown("(无回复内容)");
       }
       if (finalText) {
         chat.history.push({ role: "assistant", content: finalText });
@@ -1336,6 +1352,11 @@ async function chatSend() {
   }
 
   chat.sendBtn.disabled = false;
+}
+
+// Configure marked for safe, clean rendering
+if (typeof marked !== "undefined") {
+  marked.setOptions({ breaks: true, gfm: true });
 }
 
 async function chatInit() {
