@@ -32,17 +32,81 @@ from optimizer import (
 BASE_DIR = Path(__file__).resolve().parent
 SAMPLE_DIR = BASE_DIR / "sample_data"
 AGENT_OUTPUT_DIR = BASE_DIR / "agent_outputs"
+BUILTIN_EXISTING_STORES_FILE = SAMPLE_DIR / "existing_stores_beijing_hangzhou.csv"
 
 app = Flask(__name__, template_folder=str(BASE_DIR / "templates"), static_folder=str(BASE_DIR / "static"))
 
 
-def parse_csv_upload(file_obj) -> List[Dict[str, str]]:
+def _is_excel_bytes(raw: bytes) -> bool:
+    # xlsx/xlsm (zip container)
+    if raw.startswith(b"PK\x03\x04"):
+        return True
+    # legacy xls (OLE Compound File)
+    if raw.startswith(b"\xD0\xCF\x11\xE0\xA1\xB1\x1A\xE1"):
+        return True
+    return False
+
+
+def _parse_excel_upload(raw: bytes, label: str) -> List[Dict[str, object]]:
+    try:
+        import pandas as pd
+
+        df = pd.read_excel(io.BytesIO(raw), sheet_name=0, dtype=object)
+    except Exception as exc:
+        raise ValueError(f"{label} looks like an Excel file, but failed to parse: {exc}") from exc
+
+    df = df.dropna(how="all")
+    rows: List[Dict[str, object]] = []
+    for rec in df.to_dict(orient="records"):
+        row: Dict[str, object] = {}
+        for k, v in rec.items():
+            key = str(k).strip() if k is not None else ""
+            if not key or key.lower().startswith("unnamed:"):
+                continue
+            if pd.isna(v):
+                row[key] = ""
+            else:
+                row[key] = v
+        if any(str(v).strip() for v in row.values()):
+            rows.append(row)
+    return rows
+
+
+def parse_csv_upload(file_obj, label: str = "file") -> List[Dict[str, str]]:
     if file_obj is None or not file_obj.filename:
         return []
     raw = file_obj.read()
-    text = raw.decode("utf-8-sig", errors="ignore")
-    reader = csv.DictReader(io.StringIO(text))
-    return [dict(row) for row in reader]
+    if not raw:
+        return []
+
+    # Support non-standard uploads where an Excel file is renamed as .csv.
+    if _is_excel_bytes(raw):
+        return _parse_excel_upload(raw, label)
+
+    text = None
+    for enc in ("utf-8-sig", "utf-8", "gb18030"):
+        try:
+            text = raw.decode(enc)
+            break
+        except UnicodeDecodeError:
+            continue
+    if text is None:
+        text = raw.decode("utf-8", errors="ignore")
+
+    last_exc: Exception | None = None
+    candidates = [text, text.replace("\r\n", "\n").replace("\r", "\n")]
+    for candidate in candidates:
+        try:
+            reader = csv.DictReader(io.StringIO(candidate, newline=""))
+            return [dict(row) for row in reader]
+        except csv.Error as exc:
+            last_exc = exc
+
+    # Last fallback: try parsing as Excel when text CSV parse fails.
+    if _is_excel_bytes(raw):
+        return _parse_excel_upload(raw, label)
+
+    raise ValueError(f"{label} is not a valid CSV: {last_exc}")
 
 
 def parse_csv_file(path: Path) -> List[Dict[str, str]]:
@@ -63,7 +127,7 @@ def parse_p_values(raw: str) -> List[int]:
             values.append(int(part))
         except ValueError:
             continue
-    return values or [1, 2, 3]
+    return values or [1, 2, 3, 4, 5]
 
 
 def parse_int(raw: str, default: int) -> int:
@@ -107,6 +171,30 @@ def merge_distance_rows(primary_rows: List[Dict[str, object]], secondary_rows: L
         if key[0] and key[1]:
             merged[key] = dict(row)
     return list(merged.values())
+
+
+def merge_store_rows(primary_rows: List[Dict[str, object]], secondary_rows: List[Dict[str, object]]) -> List[Dict[str, object]]:
+    """
+    Merge store rows by `store_id`, keeping uploaded rows as authoritative and
+    appending only missing supplemental records.
+    """
+    seen_ids = set()
+    merged: List[Dict[str, object]] = []
+
+    for row in primary_rows:
+        store_id = str(row.get("store_id") or row.get("id") or "").strip()
+        if store_id:
+            seen_ids.add(store_id)
+        merged.append(dict(row))
+
+    for row in secondary_rows:
+        store_id = str(row.get("store_id") or row.get("id") or "").strip()
+        if not store_id or store_id in seen_ids:
+            continue
+        seen_ids.add(store_id)
+        merged.append(dict(row))
+
+    return merged
 
 
 def amap_distance_batch(origins: List[Tuple[str, float, float]], destination_lon: float, destination_lat: float, amap_key: str, timeout_sec: int):
@@ -276,18 +364,26 @@ def sample_file(filename: str):
 
 @app.post("/api/run")
 def run_model():
-    store_rows = parse_csv_upload(request.files.get("store_file"))
-    rdc_rows = parse_csv_upload(request.files.get("rdc_file"))
-    uploaded_distance_rows = parse_csv_upload(request.files.get("distance_file"))
+    try:
+        store_rows = parse_csv_upload(request.files.get("store_file"), "store_file")
+        rdc_rows = parse_csv_upload(request.files.get("rdc_file"), "rdc_file")
+        uploaded_distance_rows = parse_csv_upload(request.files.get("distance_file"), "distance_file")
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
 
     if not store_rows:
         return jsonify({"error": "store_file is required and must be a valid CSV"}), 400
     if not rdc_rows:
         return jsonify({"error": "rdc_file is required and must be a valid CSV"}), 400
 
+    builtin_existing_rows = parse_csv_file(BUILTIN_EXISTING_STORES_FILE)
+    before_merge_store_rows = len(store_rows)
+    store_rows = merge_store_rows(store_rows, builtin_existing_rows)
+    builtin_existing_added = max(0, len(store_rows) - before_merge_store_rows)
+
     focus_city = normalize_city(request.form.get("focus_city", ""))
-    max_new_stores = parse_int(request.form.get("max_new_stores"), 8)
-    p_values = parse_p_values(request.form.get("p_values", "1,2,3"))
+    max_new_stores = parse_int(request.form.get("max_new_stores"), 20)
+    p_values = parse_p_values(request.form.get("p_values", "1,2,3,4,5"))
     threshold_overrides = build_threshold_overrides(
         focus_city,
         request.form.get("npv_threshold_10k"),
@@ -335,6 +431,8 @@ def run_model():
         "amap_distance_rows": len(generated_distance_rows),
         "amap_warnings": amap_warnings[:40],
         "custom_rdcs": len(custom_rdcs),
+        "builtin_existing_store_rows": len(builtin_existing_rows),
+        "builtin_existing_store_rows_added": builtin_existing_added,
     }
 
     return jsonify(result)
@@ -346,9 +444,14 @@ def run_sample_model():
     rdc_rows = parse_csv_file(SAMPLE_DIR / "rdcs.csv")
     uploaded_distance_rows = parse_csv_file(SAMPLE_DIR / "distances.csv")
 
+    builtin_existing_rows = parse_csv_file(BUILTIN_EXISTING_STORES_FILE)
+    before_merge_store_rows = len(store_rows)
+    store_rows = merge_store_rows(store_rows, builtin_existing_rows)
+    builtin_existing_added = max(0, len(store_rows) - before_merge_store_rows)
+
     focus_city = normalize_city(request.form.get("focus_city", ""))
-    max_new_stores = parse_int(request.form.get("max_new_stores"), 8)
-    p_values = parse_p_values(request.form.get("p_values", "1,2,3"))
+    max_new_stores = parse_int(request.form.get("max_new_stores"), 20)
+    p_values = parse_p_values(request.form.get("p_values", "1,2,3,4,5"))
     threshold_overrides = build_threshold_overrides(
         focus_city,
         request.form.get("npv_threshold_10k"),
@@ -396,6 +499,8 @@ def run_sample_model():
         "amap_distance_rows": len(generated_distance_rows),
         "amap_warnings": amap_warnings[:40],
         "custom_rdcs": len(custom_rdcs),
+        "builtin_existing_store_rows": len(builtin_existing_rows),
+        "builtin_existing_store_rows_added": builtin_existing_added,
     }
 
     return jsonify(result)

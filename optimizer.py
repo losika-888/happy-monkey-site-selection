@@ -8,58 +8,66 @@ from typing import Dict, Iterable, List, Optional, Sequence, Tuple
 
 CITY_PARAMS: Dict[str, Dict[str, object]] = {
     "beijing": {
-        "horizon_years": 5,
+        "horizon_years": 10,
         "discount_rate": 0.12,
-        "gross_margin": 0.21,
+        "gross_margin": 0.189,
         "variable_cost_rate": 0.045,
         "tax_rate": 0.025,
         "store_residual_rate": 0.15,
-        "growth": [0.9, 1.0, 1.08, 1.12, 1.12],
+        "growth": [0.9, 1.0, 1.06, 1.10, 1.10, 1.08, 1.06, 1.04, 1.03, 1.02],
         "delivery_freq": 104,
         "delivery_fixed_cost": 120.0,
         "delivery_var_cost_km": 3.5,
         "standard_store_sales_10k": 800.0,
-        "npv_threshold_10k": 25.0,
-        "dpp_threshold_years": 2.5,
-        "revenue_per_sqm_threshold_10k": 1.2,
+        "standard_store_area_sqm": 650.0,
+        "delivery_area_cost_base": 18.0,
+        # 10-year NPV baseline for chain supermarkets (unit: 10k CNY)
+        "npv_threshold_10k": 100.0,
+        "dpp_threshold_years": 5.0,
+        # annual revenue per sqm threshold (10k CNY / sqm / year)
+        "revenue_per_sqm_threshold_10k": 1.15,
         "rent_cap_per_sqm_day": 1.8,
         "wacc": 0.12,
     },
     "hangzhou": {
-        "horizon_years": 5,
+        "horizon_years": 10,
         "discount_rate": 0.11,
-        "gross_margin": 0.22,
+        "gross_margin": 0.189,
         "variable_cost_rate": 0.042,
         "tax_rate": 0.025,
         "store_residual_rate": 0.15,
-        "growth": [0.9, 1.0, 1.08, 1.12, 1.12],
+        "growth": [0.9, 1.0, 1.06, 1.10, 1.10, 1.08, 1.06, 1.04, 1.03, 1.02],
         "delivery_freq": 104,
         "delivery_fixed_cost": 110.0,
         "delivery_var_cost_km": 3.2,
         "standard_store_sales_10k": 800.0,
-        "npv_threshold_10k": 28.0,
-        "dpp_threshold_years": 2.5,
-        "revenue_per_sqm_threshold_10k": 1.2,
+        "standard_store_area_sqm": 650.0,
+        "delivery_area_cost_base": 16.5,
+        "npv_threshold_10k": 105.0,
+        "dpp_threshold_years": 5.0,
+        "revenue_per_sqm_threshold_10k": 1.15,
         "rent_cap_per_sqm_day": 1.5,
         "wacc": 0.11,
     },
 }
 
 DEFAULT_CITY_PARAMS = {
-    "horizon_years": 5,
+    "horizon_years": 10,
     "discount_rate": 0.115,
-    "gross_margin": 0.215,
+    "gross_margin": 0.189,
     "variable_cost_rate": 0.043,
     "tax_rate": 0.025,
     "store_residual_rate": 0.15,
-    "growth": [0.9, 1.0, 1.08, 1.12, 1.12],
+    "growth": [0.9, 1.0, 1.06, 1.10, 1.10, 1.08, 1.06, 1.04, 1.03, 1.02],
     "delivery_freq": 104,
     "delivery_fixed_cost": 115.0,
     "delivery_var_cost_km": 3.35,
     "standard_store_sales_10k": 800.0,
-    "npv_threshold_10k": 30.0,
-    "dpp_threshold_years": 2.5,
-    "revenue_per_sqm_threshold_10k": 1.2,
+    "standard_store_area_sqm": 650.0,
+    "delivery_area_cost_base": 17.2,
+    "npv_threshold_10k": 102.0,
+    "dpp_threshold_years": 5.0,
+    "revenue_per_sqm_threshold_10k": 1.15,
     "rent_cap_per_sqm_day": 1.7,
     "wacc": 0.115,
 }
@@ -235,6 +243,7 @@ class Assignment:
     store_id: str
     store_name: str
     store_city: str
+    store_is_existing: bool
     demand_sales_10k: float
     rdc_id: str
     rdc_name: str
@@ -364,6 +373,25 @@ def compute_dpp(discounted_cashflows: Sequence[float], initial_investment_10k: f
     return None
 
 
+def resolve_city_thresholds(
+    city: str,
+    threshold_overrides: Optional[Dict[str, Dict[str, float]]] = None,
+) -> Tuple[float, float, float]:
+    cp = city_params(city)
+    npv_threshold = float(cp["npv_threshold_10k"])
+    dpp_threshold = float(cp["dpp_threshold_years"])
+    rev_threshold = float(cp["revenue_per_sqm_threshold_10k"])
+
+    if threshold_overrides:
+        ov = threshold_overrides.get(normalize_city(city))
+        if ov:
+            npv_threshold = float(ov.get("npv_threshold_10k", npv_threshold))
+            dpp_threshold = float(ov.get("dpp_threshold_years", dpp_threshold))
+            rev_threshold = float(ov.get("revenue_per_sqm_threshold_10k", rev_threshold))
+
+    return npv_threshold, dpp_threshold, rev_threshold
+
+
 def evaluate_stage1(
     stores: Sequence[Store],
     threshold_overrides: Optional[Dict[str, Dict[str, float]]] = None,
@@ -382,16 +410,10 @@ def evaluate_stage1(
         tax_rate = float(cp["tax_rate"])
         residual_rate = float(cp["store_residual_rate"])
 
-        npv_threshold = float(cp["npv_threshold_10k"])
-        dpp_threshold = float(cp["dpp_threshold_years"])
-        rev_threshold = float(cp["revenue_per_sqm_threshold_10k"])
-
-        if threshold_overrides:
-            ov = threshold_overrides.get(normalize_city(store.city))
-            if ov:
-                npv_threshold = float(ov.get("npv_threshold_10k", npv_threshold))
-                dpp_threshold = float(ov.get("dpp_threshold_years", dpp_threshold))
-                rev_threshold = float(ov.get("revenue_per_sqm_threshold_10k", rev_threshold))
+        npv_threshold, dpp_threshold, rev_threshold = resolve_city_thresholds(
+            store.city,
+            threshold_overrides=threshold_overrides,
+        )
 
         yearly_cashflows: List[float] = []
         discounted: List[float] = []
@@ -718,7 +740,7 @@ def distance_lookup_km(
     return haversine_km(rdc.lat, rdc.lon, store.lat, store.lon)
 
 
-def delivery_cost_pv_10k(distance_km: float, sales_10k: float, city: str) -> float:
+def delivery_cost_pv_10k(distance_km: float, sales_10k: float, area_sqm: float, city: str) -> float:
     cp = city_params(city)
     growth = list(cp["growth"])
     discount_rate = float(cp["discount_rate"])
@@ -726,13 +748,25 @@ def delivery_cost_pv_10k(distance_km: float, sales_10k: float, city: str) -> flo
     fixed_cost = float(cp["delivery_fixed_cost"])
     variable_cost = float(cp["delivery_var_cost_km"])
     std_sales = float(cp["standard_store_sales_10k"])
+    std_area = float(cp.get("standard_store_area_sqm", 650.0))
+    area_cost_base = float(cp.get("delivery_area_cost_base", 17.0))
 
     if std_sales <= 0.0:
-        demand_weight = 1.0
+        sales_weight = 1.0
     else:
-        demand_weight = max(0.05, sales_10k / std_sales)
+        sales_weight = max(0.08, sales_10k / std_sales)
 
-    trip_cost_yuan = fixed_cost + variable_cost * distance_km
+    if std_area <= 0.0:
+        area_weight = 1.0
+    else:
+        area_weight = max(0.25, area_sqm / std_area)
+
+    # A larger store typically requires higher drop volume and handling effort.
+    # Use area as a moderate elasticity on both trip frequency and per-trip handling cost.
+    demand_weight = max(0.08, 0.78 * sales_weight + 0.22 * area_weight)
+    area_handling_cost = area_cost_base * math.sqrt(area_weight)
+
+    trip_cost_yuan = fixed_cost + variable_cost * distance_km + area_handling_cost
     pv_yuan = 0.0
     for year, g in enumerate(growth, start=1):
         annual_yuan = delivery_freq * demand_weight * trip_cost_yuan * g
@@ -747,15 +781,16 @@ def optimize_stage3(
     distance_matrix: Dict[Tuple[str, str], float],
     p_values: Sequence[int],
 ) -> Dict[str, object]:
-    selected_new_ids = {str(r.get("store_id")) for r in selected_new_store_rows}
     adjusted_sales_by_store: Dict[str, float] = {
         str(r.get("store_id")): to_float(r.get("adjusted_sales_10k"), to_float(r.get("base_sales_10k"), 0.0))
         for r in selected_new_store_rows
     }
-    # Stage-3 network only contains selected candidate stores.
+    existing_sales_by_store = _build_existing_sales_proxy_map(stores)
+    # Stage-3 network contains selected new stores + existing stores.
     full_network_stores: List[Store] = _build_network_stores(
-        [s for s in stores if s.store_id in selected_new_ids],
+        stores,
         adjusted_sales_by_store,
+        existing_sales_by_store=existing_sales_by_store,
     )
 
     eligible_rdcs: List[Tuple[RDC, float]] = []
@@ -834,7 +869,7 @@ def optimize_stage3(
                     distance_km = distance_lookup_km(rdc, store, distance_matrix)
                     if not math.isfinite(distance_km):
                         continue
-                    delivery_cost = delivery_cost_pv_10k(distance_km, store.rf_sales_10k, store.city)
+                    delivery_cost = delivery_cost_pv_10k(distance_km, store.rf_sales_10k, store.area_sqm, store.city)
                     if delivery_cost < best_delivery:
                         best_rdc = rdc
                         best_distance = distance_km
@@ -857,6 +892,7 @@ def optimize_stage3(
                         store_id=store.store_id,
                         store_name=store.name,
                         store_city=store.city,
+                        store_is_existing=store.is_existing,
                         demand_sales_10k=store.rf_sales_10k,
                         rdc_id=best_rdc.rdc_id,
                         rdc_name=best_rdc.name,
@@ -956,6 +992,7 @@ def optimize_stage3(
                         "store_id": a.store_id,
                         "store_name": a.store_name,
                         "store_city": a.store_city,
+                        "store_is_existing": a.store_is_existing,
                         "store_lat": a.store_lat,
                         "store_lon": a.store_lon,
                         "demand_sales_10k": round(a.demand_sales_10k, 4),
@@ -1026,7 +1063,8 @@ def _build_stage2_bundle_payload(
     combo_ids: Sequence[str],
     candidate_by_id: Dict[str, Stage1Result],
     penalty_pairs: Dict[Tuple[str, str], float],
-) -> Dict[str, object]:
+    threshold_overrides: Optional[Dict[str, Dict[str, float]]] = None,
+) -> Optional[Dict[str, object]]:
     combo_list = list(combo_ids)
     combo_set = set(combo_list)
     penalties_by_sid: Dict[str, float] = {sid: 0.0 for sid in combo_list}
@@ -1050,6 +1088,17 @@ def _build_stage2_bundle_payload(
         adjusted_sales = base.store.rf_sales_10k * attenuation_ratio
         adjusted_npv = recompute_adjusted_npv(base, attenuation_ratio)
         adjusted_dpp = recompute_adjusted_dpp(base, attenuation_ratio)
+        npv_threshold, dpp_threshold, _ = resolve_city_thresholds(
+            base.store.city,
+            threshold_overrides=threshold_overrides,
+        )
+
+        # Stage-2 hard financial gate:
+        # only keep stores whose post-cannibalization economics still pass.
+        if adjusted_npv < npv_threshold:
+            return None
+        if adjusted_dpp is None or adjusted_dpp > dpp_threshold:
+            return None
 
         total_adjusted_npv += adjusted_npv
         adjusted_sales_by_store[sid] = adjusted_sales
@@ -1081,6 +1130,7 @@ def _enumerate_stage2_bundles_exact(
     conflict_pairs: set[Tuple[str, str]],
     penalty_pairs: Dict[Tuple[str, str], float],
     max_new_stores: int,
+    threshold_overrides: Optional[Dict[str, Dict[str, float]]] = None,
 ) -> Tuple[List[Dict[str, object]], int]:
     def has_conflict(combo_ids: Sequence[str]) -> bool:
         pool = set(combo_ids)
@@ -1096,7 +1146,15 @@ def _enumerate_stage2_bundles_exact(
             if has_conflict(combo):
                 continue
             evaluated += 1
-            bundles.append(_build_stage2_bundle_payload(combo, candidate_by_id, penalty_pairs))
+            payload = _build_stage2_bundle_payload(
+                combo,
+                candidate_by_id,
+                penalty_pairs,
+                threshold_overrides=threshold_overrides,
+            )
+            if payload is None:
+                continue
+            bundles.append(payload)
     return bundles, evaluated
 
 
@@ -1107,6 +1165,7 @@ def _enumerate_stage2_bundles_beam(
     penalty_pairs: Dict[Tuple[str, str], float],
     max_new_stores: int,
     beam_width: int,
+    threshold_overrides: Optional[Dict[str, Dict[str, float]]] = None,
 ) -> Tuple[List[Dict[str, object]], int]:
     ranked_ids = sorted(
         ids,
@@ -1121,13 +1180,26 @@ def _enumerate_stage2_bundles_beam(
         conflict_adj.setdefault(a, set()).add(b)
         conflict_adj.setdefault(b, set()).add(a)
 
-    payload_cache: Dict[Tuple[str, ...], Dict[str, object]] = {}
+    payload_cache: Dict[Tuple[str, ...], Optional[Dict[str, object]]] = {}
     seen_combos: set[Tuple[str, ...]] = set()
     bundles: List[Dict[str, object]] = []
     evaluated = 0
 
     # Always include empty bundle.
-    empty_payload = _build_stage2_bundle_payload([], candidate_by_id, penalty_pairs)
+    empty_payload = _build_stage2_bundle_payload(
+        [],
+        candidate_by_id,
+        penalty_pairs,
+        threshold_overrides=threshold_overrides,
+    )
+    if empty_payload is None:
+        empty_payload = {
+            "selected": [],
+            "adjusted_sales_by_store": {},
+            "total_adjusted_npv_10k": 0.0,
+            "total_base_npv_10k": 0.0,
+            "total_investment_10k": 0.0,
+        }
     payload_cache[tuple()] = empty_payload
     seen_combos.add(tuple())
     bundles.append(empty_payload)
@@ -1151,9 +1223,16 @@ def _enumerate_stage2_bundles_beam(
                 if new_ids in payload_cache:
                     payload = payload_cache[new_ids]
                 else:
-                    payload = _build_stage2_bundle_payload(new_ids, candidate_by_id, penalty_pairs)
+                    payload = _build_stage2_bundle_payload(
+                        new_ids,
+                        candidate_by_id,
+                        penalty_pairs,
+                        threshold_overrides=threshold_overrides,
+                    )
                     payload_cache[new_ids] = payload
                     evaluated += 1
+                if payload is None:
+                    continue
                 score = float(payload.get("total_adjusted_npv_10k", 0.0))
                 candidates_for_next.append((score, new_state, new_ids))
 
@@ -1185,6 +1264,7 @@ def _enumerate_stage2_bundles_beam(
 def _enumerate_stage2_bundles(
     stage1_results: Sequence[Stage1Result],
     max_new_stores: int = 8,
+    threshold_overrides: Optional[Dict[str, Dict[str, float]]] = None,
 ) -> Dict[str, object]:
     candidates = [r for r in stage1_results if r.passed]
     if not candidates:
@@ -1238,6 +1318,7 @@ def _enumerate_stage2_bundles(
             conflict_pairs=conflict_pairs,
             penalty_pairs=penalty_pairs,
             max_new_stores=max_new_stores,
+            threshold_overrides=threshold_overrides,
         )
     else:
         search_mode = "beam"
@@ -1249,6 +1330,7 @@ def _enumerate_stage2_bundles(
             penalty_pairs=penalty_pairs,
             max_new_stores=max_new_stores,
             beam_width=dynamic_beam,
+            threshold_overrides=threshold_overrides,
         )
 
     if not bundles:
@@ -1291,9 +1373,34 @@ def _enumerate_stage2_bundles(
 def _build_network_stores(
     stores: Sequence[Store],
     adjusted_sales_by_store: Dict[str, float],
+    existing_sales_by_store: Optional[Dict[str, float]] = None,
 ) -> List[Store]:
+    existing_sales = existing_sales_by_store or _build_existing_sales_proxy_map(stores)
     out: List[Store] = []
     for store in stores:
+        cp = city_params(store.city)
+        area_sqm = store.area_sqm if store.area_sqm > 0.0 else float(cp.get("standard_store_area_sqm", 650.0))
+
+        if store.is_existing:
+            proxy_sales = existing_sales.get(store.store_id, store.rf_sales_10k)
+            if proxy_sales <= 0.0:
+                proxy_sales = float(cp.get("standard_store_sales_10k", 800.0))
+            out.append(
+                Store(
+                    store_id=store.store_id,
+                    name=store.name,
+                    city=store.city,
+                    lat=store.lat,
+                    lon=store.lon,
+                    rf_sales_10k=proxy_sales,
+                    area_sqm=area_sqm,
+                    initial_investment_10k=store.initial_investment_10k,
+                    annual_fixed_cost_10k=store.annual_fixed_cost_10k,
+                    is_existing=True,
+                )
+            )
+            continue
+
         if store.store_id not in adjusted_sales_by_store:
             continue
         out.append(
@@ -1304,12 +1411,46 @@ def _build_network_stores(
                 lat=store.lat,
                 lon=store.lon,
                 rf_sales_10k=adjusted_sales_by_store.get(store.store_id, store.rf_sales_10k),
-                area_sqm=store.area_sqm,
+                area_sqm=area_sqm,
                 initial_investment_10k=store.initial_investment_10k,
                 annual_fixed_cost_10k=store.annual_fixed_cost_10k,
                 is_existing=False,
             )
         )
+    return out
+
+
+def _compute_candidate_city_mean_sales(stores: Sequence[Store]) -> Tuple[Dict[str, float], float]:
+    by_city: Dict[str, List[float]] = {}
+    all_sales: List[float] = []
+    for store in stores:
+        if store.is_existing or store.rf_sales_10k <= 0.0:
+            continue
+        city = normalize_city(store.city)
+        by_city.setdefault(city, []).append(store.rf_sales_10k)
+        all_sales.append(store.rf_sales_10k)
+
+    mean_by_city = {
+        city: (sum(values) / len(values))
+        for city, values in by_city.items()
+        if values
+    }
+    overall_mean = (sum(all_sales) / len(all_sales)) if all_sales else 0.0
+    return mean_by_city, overall_mean
+
+
+def _build_existing_sales_proxy_map(stores: Sequence[Store]) -> Dict[str, float]:
+    mean_by_city, overall_mean = _compute_candidate_city_mean_sales(stores)
+    out: Dict[str, float] = {}
+    for store in stores:
+        if not store.is_existing:
+            continue
+        city = normalize_city(store.city)
+        proxy_sales = mean_by_city.get(city, overall_mean)
+        if proxy_sales <= 0.0:
+            cp = city_params(city)
+            proxy_sales = max(store.rf_sales_10k, float(cp.get("standard_store_sales_10k", 800.0)))
+        out[store.store_id] = proxy_sales
     return out
 
 
@@ -1369,7 +1510,7 @@ def _best_network_plan_for_p(
                 distance_km = distance_lookup_km(rdc, store, distance_matrix)
                 if not math.isfinite(distance_km):
                     continue
-                delivery_cost = delivery_cost_pv_10k(distance_km, store.rf_sales_10k, store.city)
+                delivery_cost = delivery_cost_pv_10k(distance_km, store.rf_sales_10k, store.area_sqm, store.city)
                 if delivery_cost < best_delivery:
                     best_rdc = rdc
                     best_distance = distance_km
@@ -1385,6 +1526,7 @@ def _best_network_plan_for_p(
                     store_id=store.store_id,
                     store_name=store.name,
                     store_city=store.city,
+                    store_is_existing=store.is_existing,
                     demand_sales_10k=store.rf_sales_10k,
                     rdc_id=best_rdc.rdc_id,
                     rdc_name=best_rdc.name,
@@ -1496,8 +1638,12 @@ def _evaluate_bundle_with_combo_kernel(
     bundle: Dict[str, object],
     combo_kernel: Dict[str, object],
     store_by_id: Dict[str, Store],
+    existing_sales_by_store: Dict[str, float],
 ) -> Optional[Dict[str, object]]:
     adjusted_sales_by_store: Dict[str, float] = dict(bundle.get("adjusted_sales_by_store") or {})
+    network_sales_by_store: Dict[str, float] = dict(existing_sales_by_store)
+    network_sales_by_store.update(adjusted_sales_by_store)
+
     best_total_cost = math.inf
     best_delivery_total = 0.0
     best_plan = None
@@ -1509,22 +1655,26 @@ def _evaluate_bundle_with_combo_kernel(
         selected_delivery = 0.0
         feasible = True
 
-        for sid, sales in adjusted_sales_by_store.items():
+        for sid, sales in network_sales_by_store.items():
             info = store_best.get(sid)
             if info is None:
                 feasible = False
                 break
 
-            store = store_by_id[sid]
+            store = store_by_id.get(sid)
+            if store is None:
+                feasible = False
+                break
             rdc = info["rdc"]
             distance_km = float(info["distance_km"])
-            dcost = delivery_cost_pv_10k(distance_km, sales, store.city)
+            dcost = delivery_cost_pv_10k(distance_km, sales, store.area_sqm, store.city)
             selected_delivery += dcost
             selected_assignments.append(
                 Assignment(
                     store_id=store.store_id,
                     store_name=store.name,
                     store_city=store.city,
+                    store_is_existing=store.is_existing,
                     demand_sales_10k=sales,
                     rdc_id=rdc.rdc_id,
                     rdc_name=rdc.name,
@@ -1619,6 +1769,7 @@ def _build_stage3_scenario(plan: Dict[str, object], full_network_stores: Sequenc
                 "store_id": a.store_id,
                 "store_name": a.store_name,
                 "store_city": a.store_city,
+                "store_is_existing": a.store_is_existing,
                 "store_lat": a.store_lat,
                 "store_lon": a.store_lon,
                 "demand_sales_10k": round(a.demand_sales_10k, 4),
@@ -1642,13 +1793,18 @@ def optimize_stage2_stage3_joint(
     distance_matrix: Dict[Tuple[str, str], float],
     p_values: Sequence[int],
     max_new_stores: int = 8,
+    threshold_overrides: Optional[Dict[str, Dict[str, float]]] = None,
 ) -> Dict[str, object]:
     """
     Joint objective:
         maximize new-store adjusted NPV
-                 - total network cost
+                 - delivery network cost (PV)
     """
-    stage2_space = _enumerate_stage2_bundles(stage1_results, max_new_stores=max_new_stores)
+    stage2_space = _enumerate_stage2_bundles(
+        stage1_results,
+        max_new_stores=max_new_stores,
+        threshold_overrides=threshold_overrides,
+    )
     bundles: List[Dict[str, object]] = list(stage2_space["bundles"])
     distance_alerts = list(stage2_space["distance_alerts"])
     stage2_search_mode = str(stage2_space.get("search_mode") or "unknown")
@@ -1656,8 +1812,10 @@ def optimize_stage2_stage3_joint(
     stage2_evaluated_bundle_count = int(stage2_space.get("evaluated_bundle_count") or 0)
 
     passed_new_store_ids = {r.store.store_id for r in stage1_results if r.passed}
-    stores_for_eval = [s for s in stores if s.store_id in passed_new_store_ids]
+    existing_store_ids = {s.store_id for s in stores if s.is_existing}
+    stores_for_eval = [s for s in stores if (s.store_id in passed_new_store_ids or s.store_id in existing_store_ids)]
     store_by_id = {s.store_id: s for s in stores_for_eval}
+    existing_sales_by_store = _build_existing_sales_proxy_map(stores)
 
     eligible_rdcs, rejected_rdcs = _evaluate_rdc_pool(rdcs)
     eligible_payload = [
@@ -1708,24 +1866,33 @@ def optimize_stage2_stage3_joint(
 
         for bundle in bundles_by_stage2_score:
             adjusted_sales_by_store = dict(bundle.get("adjusted_sales_by_store") or {})
-            full_network_stores = _build_network_stores(stores, adjusted_sales_by_store)
+            full_network_stores = _build_network_stores(
+                stores,
+                adjusted_sales_by_store,
+                existing_sales_by_store=existing_sales_by_store,
+            )
             if not full_network_stores:
                 continue
 
-            # Safe pruning when total network cost is guaranteed non-negative:
+            # Safe pruning when delivery cost is guaranteed non-negative:
             # joint objective upper bound for this bundle is stage2_adjusted_npv.
             stage2_score = float(bundle.get("total_adjusted_npv_10k", 0.0))
             if can_bound_total_cost_nonnegative and stage2_score <= best_joint_objective:
                 pruned_by_upper_bound += 1
                 continue
 
-            plan = _evaluate_bundle_with_combo_kernel(bundle, combo_kernel, store_by_id)
+            plan = _evaluate_bundle_with_combo_kernel(
+                bundle,
+                combo_kernel,
+                store_by_id,
+                existing_sales_by_store=existing_sales_by_store,
+            )
             if plan is None:
                 continue
 
             evaluated_bundle_count += 1
-            total_network_cost = float(plan["total_cost_10k"])
-            joint_objective = float(bundle["total_adjusted_npv_10k"]) - total_network_cost
+            delivery_cost = float(plan.get("delivery_cost_10k", 0.0))
+            joint_objective = float(bundle["total_adjusted_npv_10k"]) - delivery_cost
 
             if joint_objective > best_joint_objective:
                 best_joint_objective = joint_objective
@@ -1779,7 +1946,11 @@ def optimize_stage2_stage3_joint(
         for r in selected_rows
         if str(r.get("store_id") or "")
     }
-    network_stores = _build_network_stores(stores, selected_sales_map)
+    network_stores = _build_network_stores(
+        stores,
+        selected_sales_map,
+        existing_sales_by_store=existing_sales_by_store,
+    )
 
     stage2_payload = {
         "selected": selected_rows,
@@ -1788,7 +1959,7 @@ def optimize_stage2_stage3_joint(
         "total_investment_10k": chosen_bundle.get("stage2_total_investment_10k", 0.0),
         "distance_alerts": distance_alerts,
         "joint_objective_value_10k": chosen_bundle.get("objective_value_10k"),
-        "objective_definition": "max(新增门店修正NPV - RDC/配送网络总成本)",
+        "objective_definition": "max(新增门店修正NPV - 全网络配送成本PV[含现存+新增])",
         "search_mode": stage2_search_mode,
         "theoretical_bundle_count": stage2_theoretical_bundle_count,
         "evaluated_bundle_count": stage2_evaluated_bundle_count,
@@ -1800,8 +1971,8 @@ def optimize_stage2_stage3_joint(
         "network_stores": [asdict(s) for s in network_stores],
         "scenarios": scenarios,
         "best_scenario": best_scenario,
-        "objective_mode": "joint_stage2_stage3_total_network_cost",
-        "optimization_scope": "candidate_stores_only",
+        "objective_mode": "joint_stage2_minus_delivery_cost",
+        "optimization_scope": "existing_and_selected_new_stores",
         "joint_search_meta": {
             "bundle_order": "stage2_adjusted_npv_desc",
             "upper_bound_pruning_enabled": can_bound_total_cost_nonnegative,
@@ -1850,6 +2021,7 @@ def run_full_model(
         distance_matrix=distance_matrix,
         p_values=p_values,
         max_new_stores=max_new_stores,
+        threshold_overrides=threshold_overrides,
     )
     stage2 = joint["stage2"]
     stage3 = joint["stage3"]
@@ -1915,6 +2087,7 @@ def run_full_model(
             "store_id": a["store_id"],
             "store_name": a["store_name"],
             "store_city": a["store_city"],
+            "store_is_existing": bool(a.get("store_is_existing", False)),
             "store_lat": a["store_lat"],
             "store_lon": a["store_lon"],
             "rdc_id": a["rdc_id"],
@@ -1931,7 +2104,7 @@ def run_full_model(
         "total_store_rows": len(stores),
         "existing_stores": sum(1 for s in stores if s.is_existing),
         "new_store_candidates": sum(1 for s in stores if not s.is_existing),
-        "optimization_scope": "candidate_stores_only",
+        "optimization_scope": "existing_and_selected_new_stores",
         "stage1_passed": sum(1 for r in stage1 if r.passed),
         "stage2_selected": len(stage2.get("selected", [])),
         "stage2_search_mode": stage2.get("search_mode"),

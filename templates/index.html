@@ -78,32 +78,32 @@
             </div>
 
             <label>
-              5年NPV阈值（万元）
+              10年NPV阈值（万元）
               <input type="number" step="0.1" name="npv_threshold_10k" id="npvThreshold" placeholder="默认随城市" />
             </label>
 
             <label>
               动态回收期DPP（年）
-              <input type="number" step="0.1" name="dpp_threshold_years" id="dppThreshold" placeholder="默认2.5" />
+              <input type="number" step="0.1" name="dpp_threshold_years" id="dppThreshold" placeholder="默认5.0" />
             </label>
 
             <label>
               坪效阈值（万元/㎡·年）
-              <input type="number" step="0.1" name="revenue_per_sqm_threshold_10k" id="revenueThreshold" placeholder="默认1.2" />
+              <input type="number" step="0.1" name="revenue_per_sqm_threshold_10k" id="revenueThreshold" placeholder="默认1.15" />
             </label>
 
             <p class="form-section">网络规划</p>
 
             <label>
               RDC 数量上限 P
-              <input type="number" id="pStepper" value="3" min="1" max="8" />
+              <input type="number" id="pStepper" value="5" min="1" max="8" />
             </label>
 
-            <input type="hidden" name="p_values" id="pValues" value="1,2,3" />
+            <input type="hidden" name="p_values" id="pValues" value="1,2,3,4,5" />
 
             <label>
               阶段二最多新增门店
-              <input type="number" name="max_new_stores" value="8" min="1" max="30" />
+              <input type="number" name="max_new_stores" value="20" min="1" max="30" />
             </label>
 
             <details class="advanced-details">
@@ -126,15 +126,15 @@
               <div class="stack" style="padding-top: 8px;">
                 <label>
                   门店数据 CSV（必填）
-                  <input type="file" name="store_file" accept=".csv" />
+                  <input type="file" name="store_file" accept=".csv,.xlsx,.xls" />
                 </label>
                 <label>
                   RDC 数据 CSV（必填）
-                  <input type="file" name="rdc_file" accept=".csv" />
+                  <input type="file" name="rdc_file" accept=".csv,.xlsx,.xls" />
                 </label>
                 <label>
                   距离矩阵 CSV（可选）
-                  <input type="file" name="distance_file" accept=".csv" />
+                  <input type="file" name="distance_file" accept=".csv,.xlsx,.xls" />
                 </label>
               </div>
             </details>
@@ -178,8 +178,10 @@
             <div class="legend-grid">
               <span><i class="dot pass"></i>通过</span>
               <span><i class="dot fail"></i>淘汰</span>
-              <span><i class="dot selected"></i>入选</span>
-              <span><i class="dot rdc"></i>RDC</span>
+              <span><i class="dot selected"></i>阶段二入选</span>
+              <span><i class="dot existing-store"></i>阶段三现存</span>
+              <span><i class="dot new-store"></i>阶段三新增</span>
+              <span><i class="legend-warehouse">🏭</i>RDC仓库</span>
             </div>
 
             <div class="dock-row">

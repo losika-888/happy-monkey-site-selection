@@ -159,6 +159,27 @@ function popupForStage1(point) {
   `;
 }
 
+function createWarehouseIcon(scale = 1) {
+  const size = Math.max(14, Math.round(18 * scale));
+  const html = `
+    <div class="warehouse-pin" style="width:${size}px;height:${size}px;" aria-hidden="true">
+      <svg viewBox="0 0 64 64" xmlns="http://www.w3.org/2000/svg">
+        <path d="M6 28L32 10l26 18v24a4 4 0 0 1-4 4H10a4 4 0 0 1-4-4V28z" fill="#2c78d8"/>
+        <path d="M16 56V36h32v20" fill="#5aa0f2"/>
+        <rect x="26" y="40" width="12" height="16" rx="2" fill="#d9ebff"/>
+        <rect x="14" y="40" width="8" height="8" rx="1.2" fill="#d9ebff"/>
+        <rect x="42" y="40" width="8" height="8" rx="1.2" fill="#d9ebff"/>
+      </svg>
+    </div>
+  `;
+  return L.divIcon({
+    className: "warehouse-div-icon",
+    html,
+    iconSize: [size, size],
+    iconAnchor: [size / 2, size / 2],
+  });
+}
+
 function initMap() {
   if (!window.L) {
     setStatus("Leaflet未加载成功，无法显示GIS地图。");
@@ -272,7 +293,7 @@ function updateStepIntro() {
 
   const defaultCopy = {
     stage1: "阶段一：查看候选门店在 NPV、DPP 和坪效阈值下的通过情况。",
-    stage2: "阶段二：联合优化选店与网络，目标为新店修正NPV扣除RDC/配送网络总成本。",
+    stage2: "阶段二：联合优化选店与网络，目标为新店修正NPV减去配送成本，且入选门店需满足修正NPV/DPP阈值。",
     stage3: "阶段三：对比不同 P 情景下的联合最优方案（选店组合可能因 P 而异）。",
   };
 
@@ -296,8 +317,10 @@ function updateStepIntro() {
 
   const bestScenario = state.result.stage3?.best_scenario;
   if (bestScenario) {
-    const assignmentCount = (bestScenario.assignments || []).filter((r) => cityMatch(r.store_city)).length;
-    els.stepIntro.textContent = `阶段三：最优 P=${bestScenario.p}，当前视图包含 ${assignmentCount} 条门店归属关系。`;
+    const assignments = (bestScenario.assignments || []).filter((r) => cityMatch(r.store_city));
+    const existingCount = assignments.filter((r) => Boolean(r.store_is_existing)).length;
+    const newCount = assignments.length - existingCount;
+    els.stepIntro.textContent = `阶段三：最优 P=${bestScenario.p}，当前视图包含 ${assignments.length} 条门店归属关系（现存 ${existingCount}，新增 ${newCount}）。`;
     return;
   }
 
@@ -397,13 +420,10 @@ function renderStepLayers() {
 
   if (state.step === "stage3") {
     openRdcs.filter((r) => cityMatch(r.city)).forEach((rdc) => {
-      L.circleMarker([rdc.lat, rdc.lon], {
-        radius: 7 * markerScale,
-        color: "#0a4f9e",
-        fillColor: "#2571d8",
-        fillOpacity: 0.95,
+      L.marker([rdc.lat, rdc.lon], {
+        icon: createWarehouseIcon(markerScale),
       })
-        .bindPopup(`<b>${rdc.name}</b><br/>${rdc.city}<br/>5年全周期成本：${fmt(rdc.lifecycle_cost_10k)} 万元`)
+        .bindPopup(`<b>${rdc.name}</b><br/>${rdc.city}<br/>全周期折现成本：${fmt(rdc.lifecycle_cost_10k)} 万元`)
         .addTo(state.layers.stage3);
       fit.push([rdc.lat, rdc.lon]);
     });
@@ -411,28 +431,34 @@ function renderStepLayers() {
     lines
       .filter((line) => cityMatch(line.store_city))
       .forEach((line) => {
+        const isExisting = Boolean(line.store_is_existing);
+        const storeColor = isExisting ? "#177e89" : "#f08a24";
+        const storeType = isExisting ? "现存门店" : "新增门店";
+
         L.polyline(
           [
             [line.store_lat, line.store_lon],
             [line.rdc_lat, line.rdc_lon],
           ],
           {
-            color: "#2878ff",
+            color: storeColor,
             weight: 1.6,
             opacity: lineOpacity,
           }
         )
           .bindPopup(
-            `<b>${line.store_name}</b> → <b>${line.rdc_name}</b><br/>距离：${fmt(line.distance_km)} km`
+            `<b>${line.store_name}</b>（${storeType}）→ <b>${line.rdc_name}</b><br/>距离：${fmt(line.distance_km)} km`
           )
           .addTo(state.layers.stage3);
 
         L.circleMarker([line.store_lat, line.store_lon], {
           radius: 4 * markerScale,
-          color: "#2f9a5c",
-          fillColor: "#2f9a5c",
+          color: storeColor,
+          fillColor: storeColor,
           fillOpacity: 0.8,
-        }).addTo(state.layers.stage3);
+        })
+          .bindPopup(`<b>${line.store_name}</b><br/>门店类型：${storeType}`)
+          .addTo(state.layers.stage3);
 
         fit.push([line.store_lat, line.store_lon], [line.rdc_lat, line.rdc_lon]);
       });
@@ -475,6 +501,7 @@ function renderSummary() {
   const meta = state.result?.meta || {};
   const entries = [
     ["门店总量", summary.total_store_rows],
+    ["现存门店", summary.existing_stores],
     ["阶段一通过", summary.stage1_passed],
     ["阶段二入选", summary.stage2_selected],
     ["合规RDC", summary.eligible_rdcs],
@@ -640,10 +667,16 @@ function renderTableByTab() {
     return;
   }
 
-  const rows = (state.result.stage3?.best_scenario?.assignments || []).filter((r) => cityMatch(r.store_city));
+  const rows = (state.result.stage3?.best_scenario?.assignments || [])
+    .filter((r) => cityMatch(r.store_city))
+    .map((row) => ({
+      ...row,
+      store_type: row.store_is_existing ? "现存门店" : "新增门店",
+    }));
   els.tableWrap.innerHTML = buildTable(rows, [
     { key: "store_id", label: "门店ID" },
     { key: "store_name", label: "门店" },
+    { key: "store_type", label: "门店类型" },
     { key: "store_city", label: "城市" },
     { key: "rdc_id", label: "RDC ID" },
     { key: "rdc_name", label: "RDC" },
@@ -664,12 +697,38 @@ function refreshAllViews() {
 }
 
 async function postForm(url, formData) {
-  const resp = await fetch(url, { method: "POST", body: formData });
-  const data = await resp.json();
+  const endpoint = resolveApiUrl(url);
+  let resp;
+  try {
+    resp = await fetch(endpoint, { method: "POST", body: formData });
+  } catch (err) {
+    throw new Error(`${err.message}（请求地址：${endpoint}）`);
+  }
+
+  const contentType = (resp.headers.get("content-type") || "").toLowerCase();
+  let data = {};
+  if (contentType.includes("application/json")) {
+    data = await resp.json();
+  } else {
+    const text = await resp.text();
+    data = { error: text || `HTTP ${resp.status}` };
+  }
   if (!resp.ok) {
     throw new Error(data.error || "request failed");
   }
   return data;
+}
+
+function resolveApiUrl(path) {
+  const raw = String(path || "");
+  if (/^https?:\/\//i.test(raw)) return raw;
+  const normalized = raw.startsWith("/") ? raw : `/${raw}`;
+  const origin = window.location.origin;
+  if (!origin || origin === "null" || window.location.protocol === "file:") {
+    // Fallback for opening HTML directly from file://
+    return `http://127.0.0.1:5001${normalized}`;
+  }
+  return normalized;
 }
 
 function createPayloadFromForm(includeFiles = true) {
@@ -722,7 +781,10 @@ async function runModel(url, includeFiles = true) {
 }
 
 async function fetchCityConfigs() {
-  const resp = await fetch("/api/cities");
+  const resp = await fetch(resolveApiUrl("/api/cities"));
+  if (!resp.ok) {
+    throw new Error(`cities api failed (${resp.status})`);
+  }
   const data = await resp.json();
   state.cityConfigs = data.cities || {};
 }
