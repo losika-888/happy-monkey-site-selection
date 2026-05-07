@@ -1,5 +1,7 @@
 # HappyMonkey Site Selection App
 
+个人运筹优化的算法学习。
+
 This project implements the workflow from:
 - `快乐猴 RDC 候选点生成全流程.docx`
 - `快乐猴社区超市联合选址优化模型.docx`
